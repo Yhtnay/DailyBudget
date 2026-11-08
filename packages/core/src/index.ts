@@ -358,3 +358,200 @@ export function parseMajorToCents(input: string | number): number {
   if (Number.isNaN(parsed)) return 0;
   return Math.round(parsed * 100);
 }
+
+// ---------------------------------------------------------
+// 6. CONVERSIONE TRICOUNT MULTI-VALUTA A 3 LIVELLI
+// ---------------------------------------------------------
+export interface MultiCurrencyTricountInput {
+  amountCents: number;               // Importo nella valuta della spesa (es. 10000 CHF)
+  exchangeRateToGroup: number;       // Tasso da valuta spesa a valuta del gruppo
+  exchangeRateGroupToBase: number;   // Tasso da valuta del gruppo a valuta base del workspace
+  myOwedGroupAmountCents: number;    // Quota mia nella valuta del gruppo
+  iPaidExpense: boolean;             // true se ho pagato io la spesa
+  includeTricountOwesImmediately: boolean;
+}
+
+export interface MultiCurrencyTricountResult {
+  groupAmountCents: number;          // Importo convertito nella valuta del gruppo (intero centesimi)
+  personalCashflowBaseCents: number; // base_amount per la transazione sul mio conto (intero centesimi)
+  personalBudgetBaseCents: number;   // budget_base_amount che impatta il mio DailyBudget (intero centesimi)
+  shouldCreatePersonalTx: boolean;
+  txIncludeInBudget: 0 | 1;
+}
+
+/**
+ * Calcola l'impatto a 3 livelli di valuta per una spesa Tricount:
+ * 1) Valuta Spesa -> Valuta Gruppo (`groupAmountCents`)
+ * 2) Valuta Gruppo -> Valuta Base Workspace per il Cashflow bancario (`personalCashflowBaseCents`)
+ * 3) Quota personale in Valuta Gruppo -> Valuta Base Workspace per il DailyBudget (`personalBudgetBaseCents`)
+ */
+export function computeMultiCurrencyTricountImpact(
+  input: MultiCurrencyTricountInput
+): MultiCurrencyTricountResult {
+  const {
+    amountCents,
+    exchangeRateToGroup,
+    exchangeRateGroupToBase,
+    myOwedGroupAmountCents,
+    iPaidExpense,
+    includeTricountOwesImmediately,
+  } = input;
+
+  const groupAmountCents = Math.round(amountCents * exchangeRateToGroup);
+  const personalBudgetBaseCents = Math.round(myOwedGroupAmountCents * exchangeRateGroupToBase);
+  const personalCashflowBaseCents = iPaidExpense
+    ? Math.round(groupAmountCents * exchangeRateGroupToBase)
+    : 0;
+  const shouldCreatePersonalTx =
+    iPaidExpense || (myOwedGroupAmountCents > 0 && includeTricountOwesImmediately);
+  const txIncludeInBudget: 0 | 1 = personalBudgetBaseCents > 0 ? 1 : 0;
+
+  return {
+    groupAmountCents,
+    personalCashflowBaseCents,
+    personalBudgetBaseCents,
+    shouldCreatePersonalTx,
+    txIncludeInBudget,
+  };
+}
+
+// ---------------------------------------------------------
+// 7. MOTORE REGOLE RICORRENTI & AUTO-COMMIT SCHEDULER
+// ---------------------------------------------------------
+export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface RecurringRuleScheduleInput {
+  id: string;
+  accountId: string;
+  categoryId: string;
+  amountCents: number;
+  currency: string;
+  description: string | null;
+  frequency: RecurringFrequency;
+  intervalCount: number;
+  nextOccurrenceDate: string; // YYYY-MM-DD
+  autoCommit: boolean;
+  isActive: boolean;
+}
+
+export interface DueRecurringOccurrence {
+  ruleId: string;
+  accountId: string;
+  categoryId: string;
+  amountCents: number;
+  currency: string;
+  description: string | null;
+  occurrenceDate: string; // YYYY-MM-DD
+}
+
+export interface RecurringEvaluationResult {
+  dueOccurrences: DueRecurringOccurrence[];
+  updatedNextDates: Array<{ ruleId: string; nextOccurrenceDate: string }>;
+}
+
+function getDaysInUtcMonth(year: number, monthZeroIndexed: number): number {
+  return new Date(Date.UTC(year, monthZeroIndexed + 1, 0)).getUTCDate();
+}
+
+function formatUtcDateYmd(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Avanza una data `YYYY-MM-DD` secondo la frequenza e l'intervallo specificati
+ * usando aritmetica UTC pura e gestendo il clamping di fine mese (es. 31 Gen + 1 mese -> 28/29 Feb).
+ */
+export function computeNextOccurrenceDate(
+  currentDateStr: string,
+  frequency: RecurringFrequency,
+  intervalCount: number
+): string {
+  const step = Math.max(1, Math.trunc(intervalCount));
+  const [yearStr, monthStr, dayStr] = currentDateStr.split('-');
+  const year = Number.parseInt(yearStr, 10);
+  const monthZero = Number.parseInt(monthStr, 10) - 1;
+  const day = Number.parseInt(dayStr, 10);
+
+  if (frequency === 'daily') {
+    const dt = new Date(Date.UTC(year, monthZero, day + step));
+    return formatUtcDateYmd(dt);
+  }
+
+  if (frequency === 'weekly') {
+    const dt = new Date(Date.UTC(year, monthZero, day + step * 7));
+    return formatUtcDateYmd(dt);
+  }
+
+  if (frequency === 'monthly') {
+    const totalMonths = year * 12 + monthZero + step;
+    const targetYear = Math.floor(totalMonths / 12);
+    const targetMonthZero = ((totalMonths % 12) + 12) % 12;
+    const maxDay = getDaysInUtcMonth(targetYear, targetMonthZero);
+    const clampedDay = Math.min(day, maxDay);
+    const dt = new Date(Date.UTC(targetYear, targetMonthZero, clampedDay));
+    return formatUtcDateYmd(dt);
+  }
+
+  // yearly
+  const targetYear = year + step;
+  const maxDay = getDaysInUtcMonth(targetYear, monthZero);
+  const clampedDay = Math.min(day, maxDay);
+  const dt = new Date(Date.UTC(targetYear, monthZero, clampedDay));
+  return formatUtcDateYmd(dt);
+}
+
+/**
+ * Valuta tutte le regole ricorrenti attive con `autoCommit === true` e `nextOccurrenceDate <= referenceDateStr`,
+ * generando le occorrenze scadute fino a `referenceDateStr` (con tetto `maxIterationsPerRule`, default 24)
+ * e restituendo la nuova `nextOccurrenceDate > referenceDateStr`.
+ */
+export function evaluateDueRecurringRules(
+  rules: RecurringRuleScheduleInput[],
+  referenceDateStr: string,
+  maxIterationsPerRule: number = 24
+): RecurringEvaluationResult {
+  const dueOccurrences: DueRecurringOccurrence[] = [];
+  const updatedNextDates: Array<{ ruleId: string; nextOccurrenceDate: string }> = [];
+  const cap = Math.max(1, Math.trunc(maxIterationsPerRule));
+
+  for (const rule of rules) {
+    if (!rule.isActive || !rule.autoCommit) {
+      continue;
+    }
+
+    if (rule.nextOccurrenceDate > referenceDateStr) {
+      continue;
+    }
+
+    let cursorDate = rule.nextOccurrenceDate;
+    let iterations = 0;
+
+    while (cursorDate <= referenceDateStr && iterations < cap) {
+      dueOccurrences.push({
+        ruleId: rule.id,
+        accountId: rule.accountId,
+        categoryId: rule.categoryId,
+        amountCents: rule.amountCents,
+        currency: rule.currency,
+        description: rule.description,
+        occurrenceDate: cursorDate,
+      });
+
+      cursorDate = computeNextOccurrenceDate(cursorDate, rule.frequency, rule.intervalCount);
+      iterations += 1;
+    }
+
+    updatedNextDates.push({
+      ruleId: rule.id,
+      nextOccurrenceDate: cursorDate,
+    });
+  }
+
+  return {
+    dueOccurrences,
+    updatedNextDates,
+  };
+}

@@ -5,6 +5,7 @@ import {
   formatCents,
   parseMajorToCents,
   validateTransactionSplits,
+  type RecurringFrequency,
   type SplitMode,
   type TransactionType,
 } from '@dailybudget/core';
@@ -19,12 +20,14 @@ import {
   saveBytesToOpfs,
   seedDemoWorkspace,
   seedMinimalWorkspace,
+  syncMarketRatesAndPrices,
   triggerBrowserDownload,
   writeBytesToDiskHandle,
   type AccountRow,
   type AccountType,
   type CategoryRow,
   type DashboardSummary,
+  type EnrichedRecurringRule,
   type EnrichedTransaction,
   type FileSystemFileHandleLike,
   type LoanRow,
@@ -95,6 +98,7 @@ export default function App() {
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [tags, setTags] = useState<TagRow[]>([]);
   const [transactions, setTransactions] = useState<EnrichedTransaction[]>([]);
+  const [recurringRules, setRecurringRules] = useState<EnrichedRecurringRule[]>([]);
   const [tricountGroups, setTricountGroups] = useState<TricountGroupDetail[]>([]);
   const [loans, setLoans] = useState<LoanRow[]>([]);
 
@@ -142,9 +146,20 @@ export default function App() {
 
   // New Tricount Group Form State
   const [newGroupName, setNewGroupName] = useState<string>('');
+  const [newGroupCurrency, setNewGroupCurrency] = useState<string>('EUR');
   const [newGroupMembersCsv, setNewGroupMembersCsv] = useState<string>(
     'Andrea (Io), Marco, Elena'
   );
+
+  // New Recurring Rule Form State
+  const [newRecDesc, setNewRecDesc] = useState<string>('');
+  const [newRecAmountMajor, setNewRecAmountMajor] = useState<string>('29.90');
+  const [newRecFreq, setNewRecFreq] = useState<RecurringFrequency>('monthly');
+  const [newRecNextDate, setNewRecNextDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  const [newRecAccountId, setNewRecAccountId] = useState<string>('');
+  const [newRecCategoryId, setNewRecCategoryId] = useState<string>('');
 
   // Loans Form State
   const [newLoanName, setNewLoanName] = useState<string>('');
@@ -186,6 +201,7 @@ export default function App() {
       const cats = repo.getCategories();
       const tgs = repo.getTags();
       const txs = repo.getTransactionsWithDetails();
+      const recs = repo.getRecurringRules();
       const tgrps = repo.getTricountGroupsWithDetails();
       const lns = repo.getLoans();
 
@@ -194,12 +210,14 @@ export default function App() {
       setCategories(cats);
       setTags(tgs);
       setTransactions(txs);
+      setRecurringRules(recs);
       setTricountGroups(tgrps);
       setLoans(lns);
 
       if (accs.length > 0 && !txAccountId) {
         setTxAccountId(accs[0].id);
         setTricountLinkAccount(accs[0].id);
+        setNewRecAccountId(accs[0].id);
       }
       const expCats = cats.filter((c) => c.type === 'expense');
       if (expCats.length > 0 && txSplits.length === 0) {
@@ -211,6 +229,7 @@ export default function App() {
           },
         ]);
         setTricountLinkCategory(expCats[0].id);
+        setNewRecCategoryId(expCats[0].id);
       }
       if (tgrps.length > 0 && !selectedGroupId) {
         const firstGrp = tgrps[0];
@@ -389,6 +408,13 @@ export default function App() {
     repoRef.current = repo;
     await syncAndRefresh(repo, { customFileName: 'nuovo_workspace.dbbudget' });
     setStatusBanner('Creato nuovo workspace pulito (.dbbudget).');
+  };
+
+  const handleSyncMarkets = async () => {
+    if (!repoRef.current) return;
+    const report = await syncMarketRatesAndPrices(repoRef.current);
+    await syncAndRefresh(repoRef.current);
+    setStatusBanner(report.details);
   };
 
   // Live preview of Transaction Budget Impact (Rule C: Transaction Override > Account Default)
@@ -630,6 +656,17 @@ export default function App() {
           >
             <RotateCcw size={15} />
             Demo
+          </button>
+
+          <button
+            id="btn-sync-markets"
+            type="button"
+            className="btn"
+            onClick={handleSyncMarkets}
+            title="Sincronizza Tassi BCE Frankfurter e Quotazioni Crypto CoinGecko (con fallback offline)"
+          >
+            <RefreshCw size={15} />
+            Sync Tassi &amp; Crypto
           </button>
 
           <button
@@ -1338,6 +1375,235 @@ export default function App() {
               </form>
             </section>
 
+            {/* Regole Ricorrenti & Auto-Commit Scheduler */}
+            <section className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">
+                    <RefreshCw size={17} />
+                    Regole Ricorrenti &amp; Auto-Commit (<code>recurring_rules</code>)
+                  </h2>
+                  <p className="card-subtitle">
+                    Generazione automatica spese fisse scadute rispetto alla Data Riferimento ({referenceDate}) con calcolo UTC deterministico
+                  </p>
+                </div>
+
+                <button
+                  id="btn-process-recurring"
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    if (!repoRef.current) return;
+                    const res = repoRef.current.processDueRecurringRules(referenceDate);
+                    await syncAndRefresh(repoRef.current);
+                    setStatusBanner(
+                      res.committedCount > 0
+                        ? `Auto-Commit completato: generate ${res.committedCount} transazioni ricorrenti scadute fino al ${referenceDate}.`
+                        : `Nessuna regola ricorrente attiva con auto_commit=1 scaduta entro il ${referenceDate}.`
+                    );
+                  }}
+                >
+                  <CheckCircle2 size={15} /> Esegui Ricorrenze Scadute
+                </button>
+              </div>
+
+              <div className="grid-3" style={{ marginBottom: '1rem' }}>
+                {recurringRules.map((rule) => {
+                  const isDue = rule.next_occurrence_date <= referenceDate;
+                  return (
+                    <div
+                      key={rule.id}
+                      style={{
+                        padding: '0.9rem',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: 'var(--bg-elevated)',
+                        border: isDue
+                          ? '1px solid var(--status-warning)'
+                          : '1px solid var(--border-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: '0.4rem',
+                        }}
+                      >
+                        <strong style={{ fontSize: '0.88rem' }}>
+                          {rule.description || 'Ricorrenza'}
+                        </strong>
+                        <span className="chip">{rule.frequency}</span>
+                      </div>
+
+                      <div className="mono-num" style={{ fontSize: '1.15rem', fontWeight: 700 }}>
+                        {formatCents(rule.amount, rule.currency)}
+                      </div>
+
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        Conto: <strong>{rule.account_name}</strong> • Cat:{' '}
+                        <strong>{rule.category_name}</strong>
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginTop: '0.2rem',
+                          flexWrap: 'wrap',
+                          gap: '0.4rem',
+                        }}
+                      >
+                        <span
+                          className={`chip mono-num ${
+                            isDue ? 'override-exclude' : 'override-include'
+                          }`}
+                        >
+                          Prossima: {rule.next_occurrence_date}{' '}
+                          {isDue ? '(SCADUTA / PRONTA)' : ''}
+                        </span>
+
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={async () => {
+                            if (!repoRef.current) return;
+                            repoRef.current.toggleRecurringRule(rule.id, {
+                              autoCommit: rule.auto_commit !== 1,
+                            });
+                            await syncAndRefresh(repoRef.current);
+                          }}
+                        >
+                          auto_commit: {rule.auto_commit === 1 ? 'ON (1)' : 'OFF (0)'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!repoRef.current || !newRecDesc.trim()) return;
+                  const accId = newRecAccountId || accounts[0]?.id;
+                  const catId =
+                    newRecCategoryId ||
+                    categories.find((c) => c.type === 'expense')?.id ||
+                    categories[0]?.id;
+                  if (!accId || !catId) return;
+
+                  repoRef.current.createRecurringRule({
+                    accountId: accId,
+                    categoryId: catId,
+                    amountCents: parseMajorToCents(newRecAmountMajor),
+                    description: newRecDesc.trim(),
+                    frequency: newRecFreq,
+                    nextOccurrenceDate: newRecNextDate || referenceDate,
+                    autoCommit: true,
+                  });
+                  setNewRecDesc('');
+                  await syncAndRefresh(repoRef.current);
+                  setStatusBanner('Nuova regola ricorrente salvata in recurring_rules.');
+                }}
+                style={{
+                  display: 'flex',
+                  gap: '0.6rem',
+                  flexWrap: 'wrap',
+                  alignItems: 'flex-end',
+                  paddingTop: '0.85rem',
+                  borderTop: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div className="field" style={{ flex: '1 1 180px' }}>
+                  <label htmlFor="rec-desc">Nuova Ricorrenza</label>
+                  <input
+                    id="rec-desc"
+                    className="input"
+                    placeholder="es. Abbonamento Palestra / Affitto"
+                    value={newRecDesc}
+                    onChange={(e) => setNewRecDesc(e.target.value)}
+                  />
+                </div>
+                <div className="field" style={{ width: '110px' }}>
+                  <label htmlFor="rec-amount">Importo (€)</label>
+                  <input
+                    id="rec-amount"
+                    className="input mono-num"
+                    value={newRecAmountMajor}
+                    onChange={(e) => setNewRecAmountMajor(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="rec-freq">Frequenza</label>
+                  <select
+                    id="rec-freq"
+                    className="select"
+                    value={newRecFreq}
+                    onChange={(e) => setNewRecFreq(e.target.value as RecurringFrequency)}
+                  >
+                    <option value="monthly">Mensile (monthly)</option>
+                    <option value="weekly">Settimanale (weekly)</option>
+                    <option value="yearly">Annuale (yearly)</option>
+                    <option value="daily">Giornaliera (daily)</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="rec-next-date">Prossima Data</label>
+                  <input
+                    id="rec-next-date"
+                    type="date"
+                    className="input mono-num"
+                    value={newRecNextDate}
+                    onChange={(e) => setNewRecNextDate(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="rec-acc">Conto</label>
+                  <select
+                    id="rec-acc"
+                    className="select"
+                    value={newRecAccountId || accounts[0]?.id || ''}
+                    onChange={(e) => setNewRecAccountId(e.target.value)}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="rec-cat">Categoria</label>
+                  <select
+                    id="rec-cat"
+                    className="select"
+                    value={
+                      newRecCategoryId ||
+                      categories.find((c) => c.type === 'expense')?.id ||
+                      ''
+                    }
+                    onChange={(e) => setNewRecCategoryId(e.target.value)}
+                  >
+                    {categories
+                      .filter((c) => c.type === 'expense')
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <button type="submit" className="btn btn-primary">
+                  <Plus size={15} /> Aggiungi Ricorrenza
+                </button>
+              </form>
+            </section>
+
             {/* Quick-Add Transazione Completa + Lista */}
             <div className="grid-2">
               <section className="card">
@@ -1908,7 +2174,7 @@ export default function App() {
                     if (names.length < 2) return;
                     const created = repoRef.current.createTricountGroup({
                       name: newGroupName.trim(),
-                      defaultCurrency: 'EUR',
+                      defaultCurrency: newGroupCurrency,
                       members: names.map((n, idx) => ({
                         name: n,
                         isMe: idx === 0,
@@ -1928,6 +2194,19 @@ export default function App() {
                     value={newGroupName}
                     onChange={(e) => setNewGroupName(e.target.value)}
                   />
+                  <select
+                    id="new-group-currency"
+                    aria-label="Valuta Default Gruppo"
+                    className="select"
+                    style={{ width: '85px' }}
+                    value={newGroupCurrency}
+                    onChange={(e) => setNewGroupCurrency(e.target.value)}
+                  >
+                    <option value="EUR">EUR</option>
+                    <option value="USD">USD</option>
+                    <option value="CHF">CHF</option>
+                    <option value="GBP">GBP</option>
+                  </select>
                   <input
                     className="input"
                     style={{ width: '220px' }}
@@ -2649,6 +2928,15 @@ export default function App() {
                       Quantità con precisione 8 decimali, Prezzo Medio di Carico (PMC) e aggiornamento prezzi offline/online
                     </p>
                   </div>
+
+                  <button
+                    id="btn-sync-markets-crypto"
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={handleSyncMarkets}
+                  >
+                    <RefreshCw size={14} /> Sync Tassi &amp; Crypto
+                  </button>
                 </div>
 
                 <div style={{ overflowX: 'auto' }}>

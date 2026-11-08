@@ -1,4 +1,4 @@
-import type { SplitMode, TransactionType } from '@dailybudget/core';
+import type { RecurringFrequency, SplitMode, TransactionType } from '@dailybudget/core';
 
 export const SCHEMA_V2_SQL = `
 -- =========================================================
@@ -353,6 +353,22 @@ export interface TricountSplitRow {
   split_mode: SplitMode;
   share_value: number | null;
   owed_group_amount: number;
+}
+
+export interface RecurringRuleRow {
+  id: string;
+  account_id: string;
+  category_id: string;
+  amount: number;
+  currency: string;
+  description: string | null;
+  frequency: RecurringFrequency;
+  interval_count: number;
+  next_occurrence_date: string;
+  auto_commit: number; // 0 | 1
+  is_active: number;   // 0 | 1
+  updated_at: number;
+  is_deleted: number;
 }
 
 export interface TransactionRow {

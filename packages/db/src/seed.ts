@@ -482,5 +482,37 @@ export function seedDemoWorkspace(
     notes: 'Take profit 25% posizione SOL',
   });
 
+  // 8. Regole Ricorrenti & Auto-Commit Scheduler
+  const upcomingDate =
+    dayNum < 25 ? `${ym}-25` : `${Number(ym.slice(0, 4)) + 1}-01-15`;
+
+  repo.createRecurringRule({
+    id: 'rec_cloud_ai',
+    accountId: accRevolut.id,
+    categoryId: catUtilities.id,
+    amountCents: 2_200, // 22,00 €
+    currency: 'EUR',
+    description: 'Abbonamento Cloud & AI Pro',
+    frequency: 'monthly',
+    intervalCount: 1,
+    nextOccurrenceDate: today,
+    autoCommit: true,
+    isActive: true,
+  });
+
+  repo.createRecurringRule({
+    id: 'rec_gym_pool',
+    accountId: accFineco.id,
+    categoryId: catHome.id,
+    amountCents: 5_500, // 55,00 €
+    currency: 'EUR',
+    description: 'Palestra & Piscina',
+    frequency: 'monthly',
+    intervalCount: 1,
+    nextOccurrenceDate: upcomingDate,
+    autoCommit: true,
+    isActive: true,
+  });
+
   repo.recomputeWidgetSnapshot(today);
 }

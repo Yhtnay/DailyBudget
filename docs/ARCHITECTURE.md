@@ -115,3 +115,48 @@ flowchart LR
     SNAP -. "SELECT * FROM widget_snapshot WHERE id='current'" .-> GL
     SNAP -. "SELECT * FROM widget_snapshot WHERE id='current'" .-> WEAR
 ```
+
+---
+
+## 4. Sincronizzazione Offline-First Tassi Fiat & Prezzi Crypto (`market-sync`)
+
+Il servizio di sincronizzazione di mercato aggiorna i cambi valutari Fiat e le quotazioni Crypto preservando l'architettura **100% Offline-First e Privacy-First**:
+
+- **Fonti Pubbliche Senza Chiave API**: la WebApp interroga on-demand o all'avvio **Frankfurter API** (tassi di cambio BCE per le valute Fiat) e **CoinGecko API** (prezzi spot per gli asset Crypto configurati con `coingecko_id`).
+- **Cache Persistente nel File `.dbbudget`**: ogni tasso o prezzo scaricato viene salvato immediatamente nelle tabelle SQLite `exchange_rates` e `crypto_assets` (`last_price_Cents`, `last_price_updated_at`), diventando parte integrante del file `.dbbudget`.
+- **Fallback Deterministico al 100%**: se il dispositivo è offline, sotto rete restrittiva o le API pubbliche non rispondono, il servizio intercetta silenziosamente l'errore di rete e utilizza i tassi e prezzi già presenti in cache dentro `.dbbudget` senza bloccare alcuna operazione contabile.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Utente
+    participant UI as "@dailybudget/web (Market Sync Service)"
+    participant Frank as "Frankfurter API (Tassi Fiat BCE)"
+    participant Gecko as "CoinGecko API (Prezzi Spot Crypto)"
+    participant Repo as "DailyBudgetRepository (.dbbudget SQLite)"
+
+    User->>UI: Avvio Workspace / Click "Aggiorna Tassi & Prezzi"
+    UI->>Repo: Legge valute attive e crypto_assets (coingecko_id)
+
+    alt Connessione Internet Disponibile (Online)
+        par Fetch Tassi di Cambio Fiat
+            UI->>Frank: GET /latest?from=EUR
+            Frank-->>UI: JSON Tassi Fiat (USD, CHF, GBP, ...)
+            UI->>Repo: UPSERT in exchange_rates (rate, fetched_at)
+        and Fetch Quotazioni Spot Crypto
+            UI->>Gecko: GET /api/v3/simple/price?ids=...&vs_currencies=eur
+            Gecko-->>UI: JSON Prezzi Spot Crypto
+            UI->>Repo: UPDATE crypto_assets (last_price_Cents, last_price_updated_at)
+        end
+        Repo->>Repo: Ricalcola Net Worth e aggiorna widget_snapshot (id = 'current')
+        Repo-->>UI: Stato aggiornato + persistenza OPFS / Disco
+    else Dispositivo Offline o API Non Raggiungibile (Fallback Locale)
+        Frank--xUI: Timeout / Network Error
+        Gecko--xUI: Timeout / Network Error
+        UI->>Repo: Legge ultimi tassi da exchange_rates e prezzi da crypto_assets
+        Repo-->>UI: Restituisce valori cached deterministci (Zero errori bloccanti)
+    end
+
+    UI-->>User: Renderizza Dashboard, Gruppi Tricount Multi-Valuta e Portfolio Crypto
+```
+

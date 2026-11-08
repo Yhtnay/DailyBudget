@@ -3,12 +3,15 @@ import {
   calculateCryptoAssetMetrics,
   calculateDailyBudget,
   calculateTricountSettlements,
+  computeMultiCurrencyTricountImpact,
   computeTricountExpenseSplits,
   doesTransactionAffectBudget,
+  evaluateDueRecurringRules,
   type CryptoHoldingMetrics,
   type DailyBudgetInput,
   type DailyBudgetResult,
   type MemberBalance,
+  type RecurringFrequency,
   type SettlementTransfer,
   type SplitMode,
   type SplitParticipantInput,
@@ -23,6 +26,7 @@ import {
   type CryptoTransactionRow,
   type ExchangeRateRow,
   type LoanRow,
+  type RecurringRuleRow,
   type TagRow,
   type TransactionRow,
   type TricountExpenseRow,
@@ -46,6 +50,12 @@ export async function getSqlJsEngine(wasmUrl?: string): Promise<SqlJsStatic> {
     );
   }
   return sqlJsPromise;
+}
+
+export interface EnrichedRecurringRule extends RecurringRuleRow {
+  account_name: string;
+  category_name: string;
+  category_color: string;
 }
 
 export interface EnrichedTransaction extends TransactionRow {
@@ -643,6 +653,157 @@ export class DailyBudgetRepository {
   }
 
   // ---------------------------------------------------------
+  // 3B. RECURRING RULES & AUTO-COMMIT SCHEDULER
+  // ---------------------------------------------------------
+  getRecurringRules(): EnrichedRecurringRule[] {
+    return this.queryAll<EnrichedRecurringRule>(
+      `SELECT r.*,
+              a.name as account_name,
+              c.name as category_name,
+              c.color as category_color
+       FROM recurring_rules r
+       JOIN accounts a ON a.id = r.account_id
+       JOIN categories c ON c.id = r.category_id
+       WHERE r.is_deleted = 0
+       ORDER BY r.next_occurrence_date ASC`
+    );
+  }
+
+  createRecurringRule(input: {
+    id?: string;
+    accountId: string;
+    categoryId: string;
+    amountCents: number;
+    currency?: string;
+    description?: string;
+    frequency: RecurringFrequency;
+    intervalCount?: number;
+    nextOccurrenceDate: string;
+    autoCommit?: boolean;
+    isActive?: boolean;
+  }): EnrichedRecurringRule {
+    const id = input.id ?? makeId('rec');
+    const currency = input.currency ?? this.getWorkspaceSettings().base_currency;
+    const now = Date.now();
+
+    this.db.run(
+      `INSERT INTO recurring_rules (
+        id, account_id, category_id, amount, currency, description,
+        frequency, interval_count, next_occurrence_date, auto_commit, is_active, updated_at, is_deleted
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [
+        id,
+        input.accountId,
+        input.categoryId,
+        Math.round(input.amountCents),
+        currency,
+        input.description ?? null,
+        input.frequency,
+        Math.max(1, Math.trunc(input.intervalCount ?? 1)),
+        input.nextOccurrenceDate,
+        input.autoCommit === false ? 0 : 1,
+        input.isActive === false ? 0 : 1,
+        now,
+      ]
+    );
+
+    this.recomputeWidgetSnapshot();
+    return this.getRecurringRules().find((r) => r.id === id)!;
+  }
+
+  toggleRecurringRule(
+    ruleId: string,
+    patch: { autoCommit?: boolean; isActive?: boolean }
+  ): void {
+    const current = this.queryOne<RecurringRuleRow>(
+      `SELECT * FROM recurring_rules WHERE id = ?`,
+      [ruleId]
+    );
+    if (!current) return;
+
+    this.db.run(
+      `UPDATE recurring_rules
+       SET auto_commit = ?, is_active = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        patch.autoCommit !== undefined ? (patch.autoCommit ? 1 : 0) : current.auto_commit,
+        patch.isActive !== undefined ? (patch.isActive ? 1 : 0) : current.is_active,
+        Date.now(),
+        ruleId,
+      ]
+    );
+    this.recomputeWidgetSnapshot();
+  }
+
+  processDueRecurringRules(refDateStr?: string): {
+    committedCount: number;
+    transactions: EnrichedTransaction[];
+  } {
+    const targetDate = refDateStr ?? this.referenceDate;
+    const rules = this.getRecurringRules();
+
+    const evalResult = evaluateDueRecurringRules(
+      rules.map((r) => ({
+        id: r.id,
+        accountId: r.account_id,
+        categoryId: r.category_id,
+        amountCents: r.amount,
+        currency: r.currency,
+        description: r.description,
+        frequency: r.frequency,
+        intervalCount: r.interval_count,
+        nextOccurrenceDate: r.next_occurrence_date,
+        autoCommit: r.auto_commit === 1,
+        isActive: r.is_active === 1,
+      })),
+      targetDate
+    );
+
+    const createdTransactions: EnrichedTransaction[] = [];
+
+    for (const occ of evalResult.dueOccurrences) {
+      const rateToBase = this.getRateToBase(occ.currency);
+      const baseAmountCents = Math.round(occ.amountCents * rateToBase);
+
+      const tx = this.createTransaction({
+        accountId: occ.accountId,
+        recurringRuleId: occ.ruleId,
+        type: 'expense',
+        amountCents: occ.amountCents,
+        currency: occ.currency,
+        exchangeRateToBase: rateToBase,
+        baseAmountCents,
+        budgetBaseAmountCents: baseAmountCents,
+        isFixed: true,
+        date: occ.occurrenceDate,
+        description: occ.description ?? 'Ricorrenza automatica',
+        splits: [
+          {
+            categoryId: occ.categoryId,
+            amountBaseCents: baseAmountCents,
+          },
+        ],
+      });
+      createdTransactions.push(tx);
+    }
+
+    const now = Date.now();
+    for (const upd of evalResult.updatedNextDates) {
+      this.db.run(
+        `UPDATE recurring_rules SET next_occurrence_date = ?, updated_at = ? WHERE id = ?`,
+        [upd.nextOccurrenceDate, now, upd.ruleId]
+      );
+    }
+
+    this.recomputeWidgetSnapshot(targetDate);
+
+    return {
+      committedCount: createdTransactions.length,
+      transactions: createdTransactions,
+    };
+  }
+
+  // ---------------------------------------------------------
   // 4. LOANS & DEBTS (loans)
   // ---------------------------------------------------------
   getLoans(): LoanRow[] {
@@ -813,6 +974,13 @@ export class DailyBudgetRepository {
     personalCategoryId?: string | null;
     personalTagIds?: string[];
   }): TricountGroupDetail {
+    const group = this.queryOne<TricountGroupRow>(
+      `SELECT * FROM tricount_groups WHERE id = ?`,
+      [input.groupId]
+    );
+    const groupCurrency = group?.default_currency ?? 'EUR';
+    const exchangeRateGroupToBase = this.getRateToBase(groupCurrency);
+
     const expenseId = input.id ?? makeId('texp');
     const now = Date.now();
     const rateToGroup = input.exchangeRateToGroup ?? 1.0;
@@ -862,13 +1030,7 @@ export class DailyBudgetRepository {
     }
 
     // Se è collegato un conto personale, creiamo la transazione bancaria + competenza budget!
-    // Regola B di HANDOFF_CONTEXT.md:
-    // - Se ho pagato io (`paidByMember.is_me === 1`):
-    //   `base_amount` = intero importo uscito dal mio conto
-    //   `budget_base_amount` = solo la mia quota parte (`mySplit.owedGroupAmountCents`)
-    // - Se ha pagato un amico ma io ho una quota e `include_tricount_owes_immediately = 1`:
-    //   `base_amount` = 0 (nessuna uscita dal mio conto bancario ora)
-    //   `budget_base_amount` = la mia quota parte (impatta subito il mio DailyBudget!)
+    // Supporta conversione a 3 livelli di valuta: Valuta Spesa -> Valuta Gruppo -> Valuta Base Workspace
     if (input.personalAccountId && expenseType === 'expense') {
       const members = this.queryAll<TricountMemberRow>(
         `SELECT * FROM tricount_members WHERE group_id = ?`,
@@ -881,11 +1043,24 @@ export class DailyBudgetRepository {
         const iPaid = input.paidByMemberId === meMember.id;
         const settings = this.getWorkspaceSettings();
 
-        if (iPaid || (myQuotaCents > 0 && settings.include_tricount_owes_immediately === 1)) {
-          const cashflowBaseCents = iPaid ? groupAmountCents : 0;
+        const impact = computeMultiCurrencyTricountImpact({
+          amountCents,
+          exchangeRateToGroup: rateToGroup,
+          exchangeRateGroupToBase,
+          myOwedGroupAmountCents: myQuotaCents,
+          iPaidExpense: iPaid,
+          includeTricountOwesImmediately: settings.include_tricount_owes_immediately === 1,
+        });
+
+        if (impact.shouldCreatePersonalTx) {
           const splits =
-            input.personalCategoryId && myQuotaCents > 0
-              ? [{ categoryId: input.personalCategoryId, amountBaseCents: myQuotaCents }]
+            input.personalCategoryId && impact.personalBudgetBaseCents > 0
+              ? [
+                  {
+                    categoryId: input.personalCategoryId,
+                    amountBaseCents: impact.personalBudgetBaseCents,
+                  },
+                ]
               : undefined;
 
           this.createTransaction({
@@ -893,11 +1068,13 @@ export class DailyBudgetRepository {
             tricountExpenseId: expenseId,
             type: 'expense',
             amountCents: iPaid ? amountCents : myQuotaCents,
-            currency: input.currency,
-            exchangeRateToBase: rateToGroup,
-            baseAmountCents: cashflowBaseCents,
-            budgetBaseAmountCents: myQuotaCents,
-            includeInBudget: myQuotaCents > 0 ? 1 : 0,
+            currency: iPaid ? input.currency : groupCurrency,
+            exchangeRateToBase: iPaid
+              ? rateToGroup * exchangeRateGroupToBase
+              : exchangeRateGroupToBase,
+            baseAmountCents: impact.personalCashflowBaseCents,
+            budgetBaseAmountCents: impact.personalBudgetBaseCents,
+            includeInBudget: impact.txIncludeInBudget,
             isFixed: false,
             date: input.date,
             description: `[Tricount] ${input.title}${iPaid ? ' (Pagato da me)' : ' (Quota mia)'}`,

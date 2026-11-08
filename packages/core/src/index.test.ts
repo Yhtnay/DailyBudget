@@ -8,6 +8,9 @@ import {
   computeTricountExpenseSplits,
   validateTransactionSplits,
   parseMajorToCents,
+  computeMultiCurrencyTricountImpact,
+  computeNextOccurrenceDate,
+  evaluateDueRecurringRules,
 } from './index.ts';
 
 describe('DailyBudget Core Engine', () => {
@@ -56,6 +59,22 @@ describe('DailyBudget Core Engine', () => {
         txIncludeInBudget: 1,
         accountIncludeInBudget: false,
         txType: 'loan_movement',
+      }),
+      true
+    );
+    assert.equal(
+      doesTransactionAffectBudget({
+        txIncludeInBudget: null,
+        accountIncludeInBudget: true,
+        txType: 'tricount_settlement',
+      }),
+      false
+    );
+    assert.equal(
+      doesTransactionAffectBudget({
+        txIncludeInBudget: 1,
+        accountIncludeInBudget: false,
+        txType: 'tricount_settlement',
       }),
       true
     );
@@ -112,18 +131,22 @@ describe('DailyBudget Core Engine', () => {
     );
   });
 
-  it('computes Crypto WAC and realized/unrealized P&L accurately', () => {
+  it('computes Crypto WAC and realized/unrealized P&L accurately across buy, sell, staking_reward, transfer_in, transfer_out', () => {
     const metrics = calculateCryptoAssetMetrics(
       [
         { type: 'buy', quantity: '1.00000000', pricePerUnitBaseCents: 5_000_000, feeBaseCents: 1_000 },
-        { type: 'buy', quantity: '1.00000000', pricePerUnitBaseCents: 7_000_000, feeBaseCents: 1_000 },
+        { type: 'transfer_in', quantity: '1.00000000', pricePerUnitBaseCents: 7_000_000, feeBaseCents: 1_000 },
+        { type: 'staking_reward', quantity: '0.50000000', pricePerUnitBaseCents: 8_000_000, feeBaseCents: 0 },
+        { type: 'transfer_out', quantity: '0.50000000', pricePerUnitBaseCents: 8_000_000, feeBaseCents: 0 },
         { type: 'sell', quantity: '0.50000000', pricePerUnitBaseCents: 8_000_000, feeBaseCents: 500 },
       ],
       8_500_000
     );
 
     assert.equal(metrics.totalQuantity, 1.5);
-    assert.equal(metrics.averageBuyPriceCents, 6_001_000);
+    // Cost basis after buy + transfer_in = 12,002,000 over 2.0 + 0.5 staking = 2.5 units (avg 4,800,800)
+    // After transfer_out (0.5) and sell (0.5), 1.5 units remain at avg 4,800,800
+    assert.equal(metrics.averageBuyPriceCents, 4_800_800);
     assert.ok(metrics.realizedPnlCents > 0);
     assert.ok(metrics.unrealizedPnlCents > 0);
   });
@@ -135,5 +158,121 @@ describe('DailyBudget Core Engine', () => {
       { categoryId: 'c2', amountBaseCents: 1000 },
     ]);
     assert.equal(check.valid, true);
+  });
+
+  it('computes 3-tier multi-currency Tricount conversion and budget vs cashflow competence', () => {
+    // Scenario A: I paid 100.00 CHF in a USD group (rate 1.12 -> 112.00 USD), workspace base is EUR (rate 0.92)
+    // My quota in group is 56.00 USD (5600 cents)
+    const paidByMe = computeMultiCurrencyTricountImpact({
+      amountCents: 10_000,
+      exchangeRateToGroup: 1.12,
+      exchangeRateGroupToBase: 0.92,
+      myOwedGroupAmountCents: 5_600,
+      iPaidExpense: true,
+      includeTricountOwesImmediately: false,
+    });
+
+    assert.equal(paidByMe.groupAmountCents, 11_200);
+    assert.equal(paidByMe.personalCashflowBaseCents, 10_304); // round(11200 * 0.92)
+    assert.equal(paidByMe.personalBudgetBaseCents, 5_152); // round(5600 * 0.92)
+    assert.equal(paidByMe.shouldCreatePersonalTx, true);
+    assert.equal(paidByMe.txIncludeInBudget, 1);
+
+    // Scenario B: Paid by someone else, I owe 5600 USD cents, immediate budget inclusion ON
+    const paidByOtherImmediate = computeMultiCurrencyTricountImpact({
+      amountCents: 10_000,
+      exchangeRateToGroup: 1.12,
+      exchangeRateGroupToBase: 0.92,
+      myOwedGroupAmountCents: 5_600,
+      iPaidExpense: false,
+      includeTricountOwesImmediately: true,
+    });
+
+    assert.equal(paidByOtherImmediate.groupAmountCents, 11_200);
+    assert.equal(paidByOtherImmediate.personalCashflowBaseCents, 0);
+    assert.equal(paidByOtherImmediate.personalBudgetBaseCents, 5_152);
+    assert.equal(paidByOtherImmediate.shouldCreatePersonalTx, true);
+    assert.equal(paidByOtherImmediate.txIncludeInBudget, 1);
+
+    // Scenario C: I paid for others only (myOwedGroupAmountCents = 0) -> cashflow > 0, budget = 0, txIncludeInBudget = 0
+    const paidForOthersOnly = computeMultiCurrencyTricountImpact({
+      amountCents: 10_000,
+      exchangeRateToGroup: 1,
+      exchangeRateGroupToBase: 1,
+      myOwedGroupAmountCents: 0,
+      iPaidExpense: true,
+      includeTricountOwesImmediately: true,
+    });
+
+    assert.equal(paidForOthersOnly.personalCashflowBaseCents, 10_000);
+    assert.equal(paidForOthersOnly.personalBudgetBaseCents, 0);
+    assert.equal(paidForOthersOnly.shouldCreatePersonalTx, true);
+    assert.equal(paidForOthersOnly.txIncludeInBudget, 0);
+  });
+
+  it('advances recurring dates safely with UTC month-end clamping and evaluates due rules', () => {
+    // Jan 31 + 1 month in non-leap year -> Feb 28
+    assert.equal(computeNextOccurrenceDate('2025-01-31', 'monthly', 1), '2025-02-28');
+    // Jan 31 + 1 month in leap year -> Feb 29
+    assert.equal(computeNextOccurrenceDate('2024-01-31', 'monthly', 1), '2024-02-29');
+    // Leap day + 1 year -> Feb 28
+    assert.equal(computeNextOccurrenceDate('2024-02-29', 'yearly', 1), '2025-02-28');
+    // Weekly and daily intervals
+    assert.equal(computeNextOccurrenceDate('2025-03-28', 'weekly', 2), '2025-04-11');
+    assert.equal(computeNextOccurrenceDate('2025-03-30', 'daily', 5), '2025-04-04');
+
+    const evaluation = evaluateDueRecurringRules(
+      [
+        {
+          id: 'rule-rent',
+          accountId: 'acc-1',
+          categoryId: 'cat-rent',
+          amountCents: 85_000,
+          currency: 'EUR',
+          description: 'Affitto Casa',
+          frequency: 'monthly',
+          intervalCount: 1,
+          nextOccurrenceDate: '2025-01-01',
+          autoCommit: true,
+          isActive: true,
+        },
+        {
+          id: 'rule-manual',
+          accountId: 'acc-1',
+          categoryId: 'cat-gym',
+          amountCents: 4_500,
+          currency: 'EUR',
+          description: 'Palestra',
+          frequency: 'monthly',
+          intervalCount: 1,
+          nextOccurrenceDate: '2025-01-01',
+          autoCommit: false, // Ignored because autoCommit is false
+          isActive: true,
+        },
+        {
+          id: 'rule-future',
+          accountId: 'acc-1',
+          categoryId: 'cat-sub',
+          amountCents: 1_200,
+          currency: 'EUR',
+          description: 'Streaming',
+          frequency: 'monthly',
+          intervalCount: 1,
+          nextOccurrenceDate: '2025-04-01', // Future relative to 2025-03-15
+          autoCommit: true,
+          isActive: true,
+        },
+      ],
+      '2025-03-15'
+    );
+
+    assert.equal(evaluation.dueOccurrences.length, 3);
+    assert.deepEqual(
+      evaluation.dueOccurrences.map((o) => o.occurrenceDate),
+      ['2025-01-01', '2025-02-01', '2025-03-01']
+    );
+    assert.deepEqual(evaluation.updatedNextDates, [
+      { ruleId: 'rule-rent', nextOccurrenceDate: '2025-04-01' },
+    ]);
   });
 });

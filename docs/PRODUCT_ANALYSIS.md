@@ -131,3 +131,73 @@ La funzione [`calculateCryptoAssetMetrics`](../packages/core/src/index.ts) proce
 | **`staking_reward`** | $+\text{qty}$ | $+0$ (costo zero) | **Si abbassa** (più unità allo stesso costo storico) | Nessuno |
 | **`sell`** | $-\text{qty}$ | $-\text{round}(\text{PMC} \times \text{qty})$ | Invariato per le unità residue | $+(\text{Proceeds Netti} - \text{Costo Unità Vendute})$ |
 | **`transfer_out`** | $-\text{qty}$ | $-\text{round}(\text{PMC} \times \text{qty})$ | Invariato per le unità residue | Nessuno |
+
+---
+
+## 6. Gestione Multi-Valuta a 3 Livelli nei Gruppi Tricount
+
+I gruppi Tricount (`tricount_groups`) supportano una pipeline multi-valuta deterministica a **3 livelli** che separa la valuta dello scontrino estero, la valuta contabile del gruppo e la valuta base del workspace personale:
+
+1. **Livello 1 — Valuta Spesa Originale (`Currency A`, es. `CHF`)**: l'importo pagato fisicamente dall'utente (`amount`, es. `10000` cent = `100,00 CHF`).
+2. **Livello 2 — Valuta del Gruppo Tricount (`Currency B`, es. `USD` o `EUR`)**: convertito tramite `exchange_rate_to_group` in `group_amount = Math.round(amount * exchange_rate_to_group)` e ripartito al centesimo tra i membri tramite [`computeTricountExpenseSplits`](../packages/core/src/index.ts).
+3. **Livello 3 — Valuta Base del Workspace (`Base Currency`, es. `EUR`)**:
+   - **`base_amount` (Cashflow Bancario)**: l'intero esborso convertito nella valuta base del workspace quando pagato dall'utente locale (`paidBySelf`), che riduce il saldo del conto bancario (`accounts.cached_balance`).
+   - **`budget_base_amount` (Competenza DailyBudget)**: la sola quota personale (`myShareGroupAmount`) convertita nella valuta base del workspace, che impatta il calcolo del **DailyBudget** e popola `transaction_splits`.
+
+```mermaid
+flowchart LR
+    subgraph L1["Livello 1: Scontrino Estero (Currency A)"]
+        ORIG["Spesa Originale: 100,00 CHF (amount = 10000)"]
+    end
+
+    subgraph L2["Livello 2: Contabilità Gruppo (Currency B)"]
+        CONV_G["Conversione: exchange_rate_to_group"]
+        GRP_AMT["Importo Gruppo: group_amount (es. USD / EUR)"]
+        SPLIT["computeTricountExpenseSplits (equal / exact / percentage / shares)"]
+        MY_SHARE["Quota Personale (owed_group_amount)"]
+        OTH_SHARE["Quote Altri Membri (Credito/Debito Tricount)"]
+    end
+
+    subgraph L3["Livello 3: Workspace Personale (Base Currency)"]
+        CASH["Cashflow Bancario (base_amount)"]
+        BUDG["Competenza Personale (budget_base_amount)"]
+        ACC["Aggiorna accounts.cached_balance"]
+        DBUD["Impatta calculateDailyBudget e transaction_splits"]
+    end
+
+    ORIG --> CONV_G --> GRP_AMT --> SPLIT
+    SPLIT --> MY_SHARE
+    SPLIT --> OTH_SHARE
+    ORIG --> CASH --> ACC
+    MY_SHARE --> BUDG --> DBUD
+```
+
+---
+
+## 7. Motore Ricorrenze Automatiche (`recurring_rules`)
+
+Il motore delle spese e entrate ricorrenti automatizza la generazione di affitti, stipendi, utenze e abbonamenti programmati nella tabella `recurring_rules`:
+
+- **Valutazione Scadenze (`evaluateDueRecurringRules`)**: ad ogni avvio o sincronizzazione del workspace, il motore ispeziona tutte le regole attive (`is_active = 1`) e verifica la condizione `next_occurrence_date <= referenceDate` (con supporto a catch-up multi-periodo fino a `maxIterationsPerRule` se l'app non viene aperta per più cicli).
+- **Generazione Transazioni Fisse**: per ogni occorrenza scaduta viene creata una riga in `transactions` collegata tramite `recurring_rule_id` e il relativo split in `transaction_splits` marcato con `is_fixed = 1` per gli esborsi fissi, garantendo l'imputazione automatica nel pool delle **Spese Fisse** (`fixedActualCents`).
+- **Avanzamento Deterministico (`computeNextOccurrenceDate`)**: la data `next_occurrence_date` avanza secondo `frequency` (`daily`, `weekly`, `biweekly`, `monthly`, `quarterly`, `yearly`) rispettando `day_of_month` e il clamping di fine mese (es. 31 gennaio -> 28/29 febbraio), e ricalcola istantaneamente `widget_snapshot`.
+
+```mermaid
+flowchart TD
+    START(["Avvio / Trigger Materializzazione (evaluateDueRecurringRules)"])
+    LOAD["Carica recurring_rules con is_active = 1"]
+    CHECK_DUE{"next_occurrence_date <= referenceDate?"}
+    GEN_TX["Crea riga in transactions (recurring_rule_id impostato)"]
+    GEN_SPLIT["Crea riga in transaction_splits con is_fixed = 1"]
+    UPD_BAL["Aggiorna accounts.cached_balance del conto associato"]
+    ADV_DATE["Avanza next_occurrence_date tramite computeNextOccurrenceDate"]
+    SNAP["Ricalcola calculateDailyBudget e aggiorna widget_snapshot"]
+    DONE(["Fine Materializzazione Ricorrenze"])
+
+    START --> LOAD --> CHECK_DUE
+    CHECK_DUE -- "Sì (Regola Scaduta)" --> GEN_TX
+    GEN_TX --> GEN_SPLIT --> UPD_BAL --> ADV_DATE
+    ADV_DATE --> CHECK_DUE
+    CHECK_DUE -- "No (Tutte le regole future)" --> SNAP --> DONE
+```
+
