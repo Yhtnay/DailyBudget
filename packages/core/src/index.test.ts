@@ -11,6 +11,9 @@ import {
   computeMultiCurrencyTricountImpact,
   computeNextOccurrenceDate,
   evaluateDueRecurringRules,
+  computeBudgetCycleWindow,
+  computeTransactionDedupeKey,
+  parseBankCsv,
 } from './index.ts';
 
 describe('DailyBudget Core Engine', () => {
@@ -275,4 +278,81 @@ describe('DailyBudget Core Engine', () => {
       { ruleId: 'rule-rent', nextOccurrenceDate: '2025-04-01' },
     ]);
   });
+
+  it('floors dailyAllowanceCents at 0 when monthly variable pool is exhausted early', () => {
+    const exhausted = calculateDailyBudget({
+      monthlyBudgetCents: 150_000, // 1.500,00 €
+      fixedExpensesPlannedCents: 80_000, // 800,00 € -> VariablePool = 700,00 € (70_000)
+      fixedExpensesActualCents: 80_000,
+      variableSpentBeforeTodayCents: 75_000, // Già sforato di 50,00 € prima di oggi
+      variableSpentTodayCents: 1_500, // Speso altri 15,00 € oggi
+      totalDaysInMonth: 30,
+      currentDayOfMonth: 20,
+    });
+
+    assert.equal(exhausted.dailyAllowanceCents, 0);
+    assert.equal(exhausted.remainingTodayCents, -1_500);
+    assert.equal(exhausted.remainingMonthVariableCents, -6_500);
+    assert.equal(exhausted.status, 'over_budget');
+  });
+
+  it('computes custom budget cycle windows for standard (day 1) and payday (day 27) cycles', () => {
+    // Standard month cycle (monthStartDay = 1)
+    const stdWindow = computeBudgetCycleWindow('2025-03-15', 1);
+    assert.equal(stdWindow.cycleStartDate, '2025-03-01');
+    assert.equal(stdWindow.cycleEndDate, '2025-03-31');
+    assert.equal(stdWindow.totalDaysInCycle, 31);
+    assert.equal(stdWindow.currentDayOfCycle, 15);
+    assert.equal(stdWindow.daysRemainingIncludingToday, 17);
+
+    // Custom payday cycle (monthStartDay = 27) when reference date is ON or AFTER day 27
+    const afterPayday = computeBudgetCycleWindow('2025-03-28', 27);
+    assert.equal(afterPayday.cycleStartDate, '2025-03-27');
+    assert.equal(afterPayday.cycleEndDate, '2025-04-26');
+    assert.equal(afterPayday.totalDaysInCycle, 31); // Mar 27..31 (5) + Apr 1..26 (26) = 31
+    assert.equal(afterPayday.currentDayOfCycle, 2); // Mar 27 = day 1, Mar 28 = day 2
+    assert.equal(afterPayday.daysRemainingIncludingToday, 30);
+
+    // Custom payday cycle (monthStartDay = 27) when reference date is BEFORE day 27
+    const beforePayday = computeBudgetCycleWindow('2025-03-10', 27);
+    assert.equal(beforePayday.cycleStartDate, '2025-02-27');
+    assert.equal(beforePayday.cycleEndDate, '2025-03-26');
+    assert.equal(beforePayday.totalDaysInCycle, 28); // Feb 2025 has 28 days: Feb 27..28 (2) + Mar 1..26 (26) = 28
+    assert.equal(beforePayday.currentDayOfCycle, 12); // Feb 27..28 (2) + Mar 1..10 (10) = 12
+    assert.equal(beforePayday.daysRemainingIncludingToday, 17);
+  });
+
+  it('parses European and ISO bank CSV files and generates deterministic deduplication keys', () => {
+    const csvContent = [
+      'Data;Descrizione;Importo;Valuta;Categoria',
+      '15/03/2025;"Esselunga   Milano";-45,80;EUR;Spesa Alimentare',
+      '2025-03-27;"Bonifico Stipendio";2.450,00;EUR;Stipendio',
+    ].join('\n');
+
+    const rows = parseBankCsv(csvContent, {
+      dateColumnIndex: 0,
+      descriptionColumnIndex: 1,
+      amountColumnIndex: 2,
+      currencyColumnIndex: 3,
+      categoryColumnIndex: 4,
+      delimiter: ';',
+      hasHeaderRow: true,
+    });
+
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].date, '2025-03-15');
+    assert.equal(rows[0].type, 'expense');
+    assert.equal(rows[0].amountCents, 4580);
+    assert.equal(rows[0].currency, 'EUR');
+    assert.equal(rows[0].categoryHint, 'Spesa Alimentare');
+    assert.equal(
+      rows[0].dedupeKey,
+      computeTransactionDedupeKey('2025-03-15', 'expense', 4580, '  esselunga milano ')
+    );
+
+    assert.equal(rows[1].date, '2025-03-27');
+    assert.equal(rows[1].type, 'income');
+    assert.equal(rows[1].amountCents, 245_000);
+  });
 });
+

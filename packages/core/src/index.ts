@@ -77,7 +77,10 @@ export function calculateDailyBudget(input: DailyBudgetInput): DailyBudgetResult
   const daysRemainingIncludingToday = Math.max(1, totalDaysInMonth - currentDayOfMonth + 1);
 
   const variableAvailableStartOfToday = totalVariablePoolCents - variableSpentBeforeTodayCents;
-  const dailyAllowanceCents = Math.floor(variableAvailableStartOfToday / daysRemainingIncludingToday);
+  const dailyAllowanceCents = Math.max(
+    0,
+    Math.floor(variableAvailableStartOfToday / daysRemainingIncludingToday)
+  );
   const remainingTodayCents = dailyAllowanceCents - variableSpentTodayCents;
   const remainingMonthVariableCents = variableAvailableStartOfToday - variableSpentTodayCents;
 
@@ -90,7 +93,11 @@ export function calculateDailyBudget(input: DailyBudgetInput): DailyBudgetResult
   const projectedSavingsOrOverrunCents = monthlyBudgetCents - projectedMonthEndTotalCents;
 
   let status: 'safe' | 'warning' | 'over_budget' = 'safe';
-  if (remainingTodayCents < 0 || remainingMonthVariableCents < 0) {
+  if (
+    variableAvailableStartOfToday < 0 ||
+    remainingTodayCents < 0 ||
+    remainingMonthVariableCents < 0
+  ) {
     status = 'over_budget';
   } else if (remainingTodayCents < dailyAllowanceCents * 0.2) {
     status = 'warning';
@@ -554,4 +561,239 @@ export function evaluateDueRecurringRules(
     dueOccurrences,
     updatedNextDates,
   };
+}
+
+// ---------------------------------------------------------
+// 8. CALCOLATORE CICLO BUDGET PERSONALIZZATO (es. Giorno Stipendio 27)
+// ---------------------------------------------------------
+export interface BudgetCycleWindow {
+  cycleStartDate: string;          // YYYY-MM-DD (incluso)
+  cycleEndDate: string;            // YYYY-MM-DD (incluso)
+  totalDaysInCycle: number;
+  currentDayOfCycle: number;       // 1-indexed (1..totalDaysInCycle)
+  daysRemainingIncludingToday: number;
+}
+
+/**
+ * Calcola la finestra temporale del ciclo di budget corrente (es. dal 27 del mese al 26 del successivo)
+ * usando aritmetica UTC pura. `monthStartDay` viene limitato all'intervallo sicuro [1, 28].
+ */
+export function computeBudgetCycleWindow(
+  referenceDateStr: string,
+  monthStartDay: number = 1
+): BudgetCycleWindow {
+  const startDay = Math.min(28, Math.max(1, Math.trunc(monthStartDay || 1)));
+  const [yearStr, monthStr, dayStr] = referenceDateStr.split('-');
+  const refYear = Number.parseInt(yearStr, 10);
+  const refMonthZero = Number.parseInt(monthStr, 10) - 1;
+  const refDay = Number.parseInt(dayStr, 10);
+
+  const refUtcMs = Date.UTC(refYear, refMonthZero, refDay);
+
+  let startUtcMs: number;
+  let endUtcMs: number;
+
+  if (startDay === 1) {
+    const lastDay = getDaysInUtcMonth(refYear, refMonthZero);
+    startUtcMs = Date.UTC(refYear, refMonthZero, 1);
+    endUtcMs = Date.UTC(refYear, refMonthZero, lastDay);
+  } else if (refDay >= startDay) {
+    startUtcMs = Date.UTC(refYear, refMonthZero, startDay);
+    endUtcMs = Date.UTC(refYear, refMonthZero + 1, startDay - 1);
+  } else {
+    startUtcMs = Date.UTC(refYear, refMonthZero - 1, startDay);
+    endUtcMs = Date.UTC(refYear, refMonthZero, startDay - 1);
+  }
+
+  const msPerDay = 86_400_000;
+  const totalDaysInCycle = Math.round((endUtcMs - startUtcMs) / msPerDay) + 1;
+  const currentDayOfCycle = Math.max(
+    1,
+    Math.min(totalDaysInCycle, Math.round((refUtcMs - startUtcMs) / msPerDay) + 1)
+  );
+  const daysRemainingIncludingToday = Math.max(1, totalDaysInCycle - currentDayOfCycle + 1);
+
+  return {
+    cycleStartDate: formatUtcDateYmd(new Date(startUtcMs)),
+    cycleEndDate: formatUtcDateYmd(new Date(endUtcMs)),
+    totalDaysInCycle,
+    currentDayOfCycle,
+    daysRemainingIncludingToday,
+  };
+}
+
+// ---------------------------------------------------------
+// 9. PARSER CSV BANCARIO UNIVERSALE & DEDUPLICAZIONE
+// ---------------------------------------------------------
+export interface CsvColumnMapping {
+  dateColumnIndex: number;
+  descriptionColumnIndex: number;
+  amountColumnIndex: number;
+  currencyColumnIndex?: number;
+  categoryColumnIndex?: number;
+  delimiter?: ',' | ';' | '\t';
+  hasHeaderRow?: boolean;
+  defaultCurrency?: string;
+}
+
+export interface ParsedBankCsvRow {
+  date: string;           // Normalized YYYY-MM-DD
+  description: string;
+  amountCents: number;    // Absolute integer cents
+  type: 'income' | 'expense';
+  currency: string;
+  categoryHint: string | null;
+  dedupeKey: string;
+}
+
+/**
+ * Genera una chiave deterministica di deduplicazione per prevenire doppi import CSV.
+ */
+export function computeTransactionDedupeKey(
+  date: string,
+  type: string,
+  amountCents: number,
+  description: string
+): string {
+  const normDesc = description
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return `${date}|${type}|${Math.abs(Math.round(amountCents))}|${normDesc}`;
+}
+
+function splitCsvLine(line: string, delimiter: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === delimiter && !inQuotes) {
+      fields.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
+function normalizeBankDate(raw: string): string | null {
+  const cleaned = raw.trim().replace(/^["']|["']$/g, '');
+  if (!cleaned) return null;
+
+  // YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = cleaned.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (isoMatch) {
+    const y = isoMatch[1];
+    const m = isoMatch[2].padStart(2, '0');
+    const d = isoMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const euMatch = cleaned.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (euMatch) {
+    const d = euMatch[1].padStart(2, '0');
+    const m = euMatch[2].padStart(2, '0');
+    const y = euMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  return null;
+}
+
+function parseBankAmountToSignedCents(raw: string): number | null {
+  let cleaned = raw.trim().replace(/^["']|["']$/g, '').replace(/[€$£¥\s]/g, '');
+  if (!cleaned) return null;
+
+  // Handle European format with thousand dots and decimal comma (e.g. "-1.250,50" -> "-1250.50")
+  if (cleaned.includes(',') && cleaned.includes('.')) {
+    if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    } else {
+      cleaned = cleaned.replace(/,/g, '');
+    }
+  } else if (cleaned.includes(',')) {
+    cleaned = cleaned.replace(',', '.');
+  }
+
+  const parsed = Number.parseFloat(cleaned);
+  if (Number.isNaN(parsed)) return null;
+  return Math.round(parsed * 100);
+}
+
+/**
+ * Effettua il parsing puro di un file CSV bancario secondo la mappatura colonne indicata,
+ * normalizzando date (`YYYY-MM-DD`), importi in centesimi interi e calcolando `dedupeKey`.
+ */
+export function parseBankCsv(
+  csvContent: string,
+  mapping: CsvColumnMapping
+): ParsedBankCsvRow[] {
+  const lines = csvContent
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  if (lines.length === 0) return [];
+
+  const firstLine = lines[0];
+  const delimiter =
+    mapping.delimiter ??
+    (firstLine.includes(';') ? ';' : firstLine.includes('\t') ? '\t' : ',');
+  const startIndex = mapping.hasHeaderRow !== false ? 1 : 0;
+  const defaultCurrency = (mapping.defaultCurrency ?? 'EUR').toUpperCase();
+
+  const results: ParsedBankCsvRow[] = [];
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const cols = splitCsvLine(lines[i], delimiter);
+    const rawDate = cols[mapping.dateColumnIndex] ?? '';
+    const rawDesc = cols[mapping.descriptionColumnIndex] ?? '';
+    const rawAmount = cols[mapping.amountColumnIndex] ?? '';
+
+    const date = normalizeBankDate(rawDate);
+    const signedCents = parseBankAmountToSignedCents(rawAmount);
+    if (!date || signedCents === null || signedCents === 0) {
+      continue;
+    }
+
+    const description = rawDesc.replace(/^["']|["']$/g, '').trim() || 'Movimento bancario';
+    const type: 'income' | 'expense' = signedCents > 0 ? 'income' : 'expense';
+    const amountCents = Math.abs(signedCents);
+    const rawCurrency =
+      mapping.currencyColumnIndex !== undefined
+        ? (cols[mapping.currencyColumnIndex] ?? '').replace(/^["']|["']$/g, '').trim()
+        : '';
+    const currency = (rawCurrency || defaultCurrency).toUpperCase();
+    const rawCat =
+      mapping.categoryColumnIndex !== undefined
+        ? (cols[mapping.categoryColumnIndex] ?? '').replace(/^["']|["']$/g, '').trim()
+        : '';
+    const categoryHint = rawCat ? rawCat : null;
+
+    const dedupeKey = computeTransactionDedupeKey(date, type, amountCents, description);
+
+    results.push({
+      date,
+      description,
+      amountCents,
+      type,
+      currency,
+      categoryHint,
+      dedupeKey,
+    });
+  }
+
+  return results;
 }

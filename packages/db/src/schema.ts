@@ -401,6 +401,17 @@ export interface TransactionSplitRow {
   notes: string | null;
 }
 
+export interface AttachmentRow {
+  id: string;
+  transaction_id: string;
+  file_name: string;
+  mime_type: string;
+  storage_type: 'inline_blob' | 'local_path' | 'cloud_url';
+  blob_data: Uint8Array | null;
+  external_path: string | null;
+  created_at: number;
+}
+
 export interface CryptoAssetRow {
   id: string;
   symbol: string;

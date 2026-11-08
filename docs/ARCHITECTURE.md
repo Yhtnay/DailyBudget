@@ -160,3 +160,99 @@ sequenceDiagram
     UI-->>User: Renderizza Dashboard, Gruppi Tricount Multi-Valuta e Portfolio Crypto
 ```
 
+---
+
+## 5. Strategia Ibrida Smart per Allegati e Scontrini (`attachments`)
+
+La tabella `attachments` utilizza una strategia di archiviazione ibrida progettata per mantenere il file `.dbbudget` auto-contenuto senza mai superare il limite rigido di **~30 MB di RAM delle estensioni iOS WidgetKit**:
+
+1. **Compressione Client-Side Automatica**: quando l'utente allega la foto di uno scontrino o una ricevuta (`image/jpeg`, `image/png`, `image/webp`), il client ridimensiona l'immagine (lato massimo `<= 1200px`) e la comprime in formato **WebP/JPEG** (`quality ~0.75`), riducendo una foto da 4–8 MB a circa **`40–80 KB`**.
+2. **Soglia Smart `500 KB` (`MAX_INLINE_BLOB_BYTES = 512000`)**:
+   - **Se `file_size_bytes <= 500 KB`** (99% degli scontrini compressi): l'allegato viene salvato direttamente dentro il file `.dbbudget` come `storage_type = 'inline_blob'` (`data_blob BLOB`), garantendo portabilità immediata su tutti i dispositivi.
+   - **Se `file_size_bytes > 500 KB`** (es. contratti PDF multipagina o fatture pesanti): il database rifiuta il salvataggio inline per proteggere la memoria del Widget e registra un riferimento esterno con `storage_type = 'local_path'` (file nella cartella allegati locale) oppure `storage_type = 'cloud_url'`.
+
+```mermaid
+flowchart LR
+    UP["Upload Scontrino / Fattura (Foto 5 MB o PDF)"]
+    IMG{"È un'immagine (JPEG/PNG/WebP)?"}
+    COMP["Compressione Client-Side Canvas (Max 1200px, WebP/JPEG ~60 KB)"]
+    SIZE{"Dimensione Finale <= 500 KB?"}
+
+    INLINE["storage_type = 'inline_blob' (Salva data_blob dentro .dbbudget)"]
+    EXT["storage_type = 'local_path' / 'cloud_url' (Salva file fuori dal DB)"]
+    SAFE["File .dbbudget leggero (< 30 MB RAM Limit iOS WidgetKit)"]
+
+    UP --> IMG
+    IMG -- "Sì" --> COMP --> SIZE
+    IMG -- "No (es. PDF multipagina)" --> SIZE
+    SIZE -- "Sì (<= 512.000 byte)" --> INLINE --> SAFE
+    SIZE -- "No (> 512.000 byte)" --> EXT --> SAFE
+```
+
+---
+
+## 6. Sincronizzazione Multi-Dispositivo & Row-Level LWW Merge (`.dbbudget` & Delta JSON)
+
+Poiché un file SQLite binario sincronizzato tramite cartelle cloud (iCloud Drive, Google Drive, Syncthing) può generare copie in conflitto se modificato offline su due dispositivi contemporaneamente (es. Laptop + Smartphone), `@dailybudget/db` implementa un motore di **Row-Level Last-Write-Wins (LWW) Merge** deterministico e senza perdita di dati:
+
+- **Chiave di Risoluzione `(id, updated_at, is_deleted)`**: tutte le tabelle sincronizzabili espongono `id` (UUID), `updated_at` (timestamp ISO-8601 UTC) e `is_deleted` (`0 | 1` soft-delete / tombstone).
+- **Unione Deterministica Riga per Riga**:
+  - Se un `id` esiste nel database remoto ma non in quello locale $\rightarrow$ viene **inserito** (`INSERT`).
+  - Se un `id` esiste in entrambi i database $\rightarrow$ vince la riga con `remote.updated_at > local.updated_at` (`UPDATE`), propagando anche eventuali cancellazioni (`is_deleted = 1`).
+- **Supporto Doppio Formato**: il merge accetta sia un secondo file binario `.dbbudget` completo (`mergeFromDatabaseBytes`) sia un pacchetto leggero **Delta JSON** (`exportDeltaSince(sinceIso)` / `mergeDeltaPacket(packet)`).
+- **Riconciliazione Post-Merge**: al termine dell'unione di tutte le tabelle in una singola transazione atomica, il repository invoca `recomputeAccountBalance()` su ogni conto e `recomputeWidgetSnapshot()` per riallineare saldi, DailyBudget e Net Worth.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant DevA as "Dispositivo A (Workspace Locale .dbbudget)"
+    participant DevB as "Dispositivo B (File .dbbudget Remoto / Delta JSON)"
+    participant Merge as "Motore LWW Merge (DailyBudgetRepository)"
+    participant Core as "@dailybudget/core (Accounting Engine)"
+
+    DevB->>Merge: Fornisce file .dbbudget in conflitto oppure Delta JSON (sinceIso)
+    activate Merge
+    Merge->>Merge: BEGIN TRANSACTION (Ordine topologico FK-safe delle tabelle)
+    loop Per ogni tabella sincronizzabile e per ogni riga remota (id)
+        alt ID non presente nel DB Locale
+            Merge->>DevA: INSERT riga remota (inclusi tombstone is_deleted = 1)
+        else ID presente in entrambi e remote.updated_at > local.updated_at
+            Merge->>DevA: UPDATE riga locale con stato remoto (Last-Write-Wins)
+        else local.updated_at >= remote.updated_at
+            Merge->>Merge: Mantiene riga locale (Skip)
+        end
+    end
+    Merge->>Core: Ricalcola saldi conti (recomputeAccountBalance)
+    Merge->>Core: Ricalcola calculateDailyBudget() + calculateCryptoAssetMetrics()
+    Merge->>DevA: UPSERT widget_snapshot (id = 'current') & COMMIT
+    deactivate Merge
+    DevA-->>DevA: Salva .dbbudget unificato su OPFS e File System Access API
+```
+
+---
+
+## 7. Pipeline Import/Export CSV Bancario con Deduplica (`computeTransactionDedupeKey`)
+
+Per agevolare la migrazione da altre app o l'importazione periodica degli estratti conto bancari (Revolut, Fineco, Intesa, BBVA, N26), `@dailybudget/core` e `@dailybudget/db` forniscono una pipeline CSV deterministica con prevenzione dei duplicati:
+
+1. **Parsing & Normalizzazione (`parseBankCsvTransactions`)**:
+   - Supporta delimitatori `,` e `;`, campi quotati e formati numerici sia europei (`-1.234,56` / `-12,50`) sia anglosassoni (`-1234.56`), convertendoli direttamente in **interi in centesimi (`amountCents`)** senza errori floating-point.
+   - Normalizza le date (`YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY`) nello standard ISO `YYYY-MM-DD`.
+2. **Impronta di Deduplica (`computeTransactionDedupeKey`)**:
+   - Calcola una chiave canonica `dedupeKey` basata su `(account_id, tx_date, signed_amount_cents, normalized_merchant_or_description)`.
+   - Durante l'importazione (`importBankCsvTransactions`), ogni riga CSV viene confrontata con le chiavi già presenti nel database e nel batch corrente: le righe già registrate manualmente o in un import precedente vengono **scartate automaticamente** (`skippedDuplicates`), evitando doppi addebiti sul conto e sul DailyBudget.
+
+```mermaid
+flowchart LR
+    CSV["File CSV Bancario (Revolut / Fineco / Intesa)"]
+    PARSE["parseBankCsvTransactions (Date ISO + Importi in Centesimi)"]
+    KEY["computeTransactionDedupeKey (account_id + tx_date + signed_cents + text)"]
+    CHECK{"dedupeKey già presente nel DB?"}
+    SKIP["Scarta Duplicato (skippedDuplicates++)"]
+    INS["Inserisce Transazione + Split + Aggiorna Saldo e DailyBudget"]
+
+    CSV --> PARSE --> KEY --> CHECK
+    CHECK -- "Sì (Già importata/manuale)" --> SKIP
+    CHECK -- "No (Nuova transazione)" --> INS
+```
+

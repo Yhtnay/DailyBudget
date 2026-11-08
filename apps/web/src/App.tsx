@@ -15,6 +15,7 @@ import {
   isFileSystemAccessSupported,
   isOpfsSupported,
   loadBytesFromOpfs,
+  mergeExternalDbBudgetBinary,
   openLocalDbBudgetFile,
   saveAsLocalDbBudgetFile,
   saveBytesToOpfs,
@@ -25,6 +26,7 @@ import {
   writeBytesToDiskHandle,
   type AccountRow,
   type AccountType,
+  type AttachmentRow,
   type CategoryRow,
   type DashboardSummary,
   type EnrichedRecurringRule,
@@ -45,11 +47,15 @@ import {
   Coins,
   Database,
   Download,
+  FileSpreadsheet,
   FolderOpen,
+  GitMerge,
   HandCoins,
   HardDrive,
   Layers,
   Moon,
+  Paperclip,
+  PiggyBank,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -60,10 +66,91 @@ import {
   Sun,
   Tag,
   Trash2,
+  Upload,
   Users,
   Wallet,
   Watch,
 } from 'lucide-react';
+
+async function compressReceiptImageIfPossible(
+  file: File
+): Promise<{ bytes: Uint8Array; mimeType: string; fileName: string }> {
+  if (!file.type.startsWith('image/')) {
+    const buf = await file.arrayBuffer();
+    return {
+      bytes: new Uint8Array(buf),
+      mimeType: file.type || 'application/octet-stream',
+      fileName: file.name,
+    };
+  }
+
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const maxDim = 1200;
+      let width = img.width;
+      let height = img.height;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        file.arrayBuffer().then((buf) =>
+          resolve({
+            bytes: new Uint8Array(buf),
+            mimeType: file.type,
+            fileName: file.name,
+          })
+        );
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        async (blob) => {
+          if (!blob) {
+            const buf = await file.arrayBuffer();
+            resolve({
+              bytes: new Uint8Array(buf),
+              mimeType: file.type,
+              fileName: file.name,
+            });
+            return;
+          }
+          const buf = await blob.arrayBuffer();
+          const baseName = file.name.replace(/\.[^.]+$/, '');
+          resolve({
+            bytes: new Uint8Array(buf),
+            mimeType: blob.type || 'image/webp',
+            fileName: `${baseName}_compressed.webp`,
+          });
+        },
+        'image/webp',
+        0.75
+      );
+    };
+    img.onerror = async () => {
+      URL.revokeObjectURL(url);
+      const buf = await file.arrayBuffer();
+      resolve({
+        bytes: new Uint8Array(buf),
+        mimeType: file.type,
+        fileName: file.name,
+      });
+    };
+    img.src = url;
+  });
+}
 
 type ActiveTab = 'dashboard' | 'transactions' | 'tricount' | 'loans' | 'crypto';
 
@@ -178,7 +265,16 @@ export default function App() {
   const [cryptoPriceMajor, setCryptoPriceMajor] = useState<string>('84500.00');
   const [cryptoFeeMajor, setCryptoFeeMajor] = useState<string>('2.50');
   const [cryptoNotes, setCryptoNotes] = useState<string>('');
+  const [cryptoLinkedAccountId, setCryptoLinkedAccountId] = useState<string>('');
+  const [cryptoCountPac, setCryptoCountPac] = useState<boolean>(false);
   const [priceEditMap, setPriceEditMap] = useState<Record<string, string>>({});
+
+  // Bank CSV Import/Export & Receipt Attachments State
+  const [csvImportContent, setCsvImportContent] = useState<string>(
+    'Data;Descrizione;Importo;Valuta\n05/11/2026;Spesa Carrefour Market;-42,80;EUR\n06/11/2026;Rimborso Biglietto Concerto;+35,00;EUR'
+  );
+  const [attachmentTxId, setAttachmentTxId] = useState<string>('');
+  const [recentAttachments, setRecentAttachments] = useState<AttachmentRow[]>([]);
 
   // Sync theme attribute on document
   useEffect(() => {
@@ -240,6 +336,13 @@ export default function App() {
       }
       if (dash.cryptoSummary.assets.length > 0 && !cryptoAssetId) {
         setCryptoAssetId(dash.cryptoSummary.assets[0].asset.id);
+      }
+      if (txs.length > 0) {
+        const targetAttTxId = attachmentTxId || txs[0].id;
+        if (!attachmentTxId) {
+          setAttachmentTxId(txs[0].id);
+        }
+        setRecentAttachments(repo.getAttachmentsForTransaction(targetAttTxId));
       }
 
       const binary = repo.exportBinary();
@@ -415,6 +518,25 @@ export default function App() {
     const report = await syncMarketRatesAndPrices(repoRef.current);
     await syncAndRefresh(repoRef.current);
     setStatusBanner(report.details);
+  };
+
+  const handleMergeExternalDbBudget = async () => {
+    if (!repoRef.current) return;
+    try {
+      const opened = await openLocalDbBudgetFile();
+      if (!opened) return;
+      const res = await mergeExternalDbBudgetBinary(
+        repoRef.current,
+        opened.bytes,
+        { wasmUrl }
+      );
+      await syncAndRefresh(repoRef.current);
+      setStatusBanner(
+        `Merge LWW completato da "${opened.fileName}": ${res.mergedRowsCount} righe sincronizzate.`
+      );
+    } catch (err) {
+      setStatusBanner((err as Error).message);
+    }
   };
 
   // Live preview of Transaction Budget Impact (Rule C: Transaction Override > Account Default)
@@ -637,6 +759,17 @@ export default function App() {
           </button>
 
           <button
+            id="btn-merge-dbbudget"
+            type="button"
+            className="btn"
+            onClick={handleMergeExternalDbBudget}
+            title="Sincronizza un altro file .dbbudget tramite Row-Level Last-Write-Wins (LWW)"
+          >
+            <GitMerge size={15} />
+            Merge LWW .dbbudget
+          </button>
+
+          <button
             id="btn-new-workspace"
             type="button"
             className="btn"
@@ -785,9 +918,11 @@ export default function App() {
                 <div className="daily-hero-top">
                   <div>
                     <div className="card-subtitle">
-                      DISPONIBILITÀ OGGI ({referenceDate} • Giorno{' '}
-                      {dailyBudgetInput.currentDayOfMonth}/
-                      {dailyBudgetInput.totalDaysInMonth})
+                      DISPONIBILITÀ OGGI ({referenceDate} • Ciclo{' '}
+                      {dashboard.cycleWindow.cycleStartDate} →{' '}
+                      {dashboard.cycleWindow.cycleEndDate} • Giorno{' '}
+                      {dashboard.cycleWindow.currentDayOfCycle}/
+                      {dashboard.cycleWindow.totalDaysInCycle})
                     </div>
                     <div
                       className="allowance-display mono-num"
@@ -840,28 +975,90 @@ export default function App() {
                           : 'Over Budget'}
                     </span>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Target Mensile:
-                      </span>
-                      <input
-                        id="input-monthly-target"
-                        type="number"
-                        step="50"
-                        className="input mono-num"
-                        style={{ width: '105px', padding: '0.25rem 0.45rem', fontSize: '0.8rem' }}
-                        value={(dashboard.settings.monthly_budget_target / 100).toFixed(0)}
-                        onChange={async (e) => {
-                          const val = Number.parseFloat(e.target.value);
-                          if (Number.isNaN(val) || val <= 0 || !repoRef.current) return;
-                          repoRef.current.updateWorkspaceSettings({
-                            monthlyBudgetTargetCents: Math.round(val * 100),
-                          });
-                          await syncAndRefresh(repoRef.current);
-                        }}
-                      />
-                      <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>€</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <label
+                          htmlFor="input-month-start-day"
+                          style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}
+                        >
+                          Giorno Inizio Ciclo:
+                        </label>
+                        <input
+                          id="input-month-start-day"
+                          type="number"
+                          min={1}
+                          max={28}
+                          className="input mono-num"
+                          style={{ width: '62px', padding: '0.25rem 0.4rem', fontSize: '0.8rem' }}
+                          value={dashboard.settings.month_start_day}
+                          onChange={async (e) => {
+                            const day = Number.parseInt(e.target.value, 10);
+                            if (Number.isNaN(day) || day < 1 || day > 28 || !repoRef.current) return;
+                            repoRef.current.updateWorkspaceSettings({
+                              monthStartDay: day,
+                            });
+                            await syncAndRefresh(repoRef.current);
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <label
+                          htmlFor="input-monthly-target"
+                          style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}
+                        >
+                          Target Mensile:
+                        </label>
+                        <input
+                          id="input-monthly-target"
+                          type="number"
+                          step="50"
+                          className="input mono-num"
+                          style={{ width: '100px', padding: '0.25rem 0.45rem', fontSize: '0.8rem' }}
+                          value={(dashboard.settings.monthly_budget_target / 100).toFixed(0)}
+                          onChange={async (e) => {
+                            const val = Number.parseFloat(e.target.value);
+                            if (Number.isNaN(val) || val <= 0 || !repoRef.current) return;
+                            repoRef.current.updateWorkspaceSettings({
+                              monthlyBudgetTargetCents: Math.round(val * 100),
+                            });
+                            await syncAndRefresh(repoRef.current);
+                          }}
+                        />
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>€</span>
+                      </div>
                     </div>
+
+                    <button
+                      id="btn-sweep-savings"
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={async () => {
+                        if (!repoRef.current) return;
+                        const checkingAcc =
+                          accounts.find((a) => a.type === 'checking') ?? accounts[0];
+                        const savingsAcc =
+                          accounts.find((a) => a.type === 'savings') ?? accounts[1];
+                        if (!checkingAcc || !savingsAcc) return;
+                        const sweepAmountCents = Math.min(
+                          10000,
+                          Math.max(2500, dailyBudgetResult.remainingTodayCents)
+                        );
+                        repoRef.current.sweepSavingsToAccount({
+                          fromAccountId: checkingAcc.id,
+                          toSavingsAccountId: savingsAcc.id,
+                          amountCents: sweepAmountCents,
+                          date: referenceDate,
+                          description: `Accantonamento Risparmio (${referenceDate})`,
+                        });
+                        await syncAndRefresh(repoRef.current);
+                        setStatusBanner(
+                          `Giroconto Risparmio completato: ${formatCents(sweepAmountCents)} trasferiti da "${checkingAcc.name}" a "${savingsAcc.name}" (neutro sul DailyBudget).`
+                        );
+                      }}
+                    >
+                      <PiggyBank size={14} /> Giroconta Risparmio a Conto Savings
+                    </button>
                   </div>
                 </div>
 
@@ -2126,6 +2323,181 @@ export default function App() {
                 </div>
               </section>
             </div>
+
+            {/* Import / Export CSV Bancario & Allegati Scontrini (attachments) */}
+            <section className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">
+                    <FileSpreadsheet size={17} />
+                    Import / Export CSV Bancario &amp; Allegati Scontrini (<code>attachments</code>)
+                  </h2>
+                  <p className="card-subtitle">
+                    Deduplica deterministica su import CSV e compressione WebP client-side (&le; 500 KB <code>inline_blob</code> SQLite vs <code>local_path</code>)
+                  </p>
+                </div>
+
+                <button
+                  id="btn-export-csv"
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    if (!repoRef.current) return;
+                    const csv = repoRef.current.exportTransactionsToCsv();
+                    const bytes = new TextEncoder().encode(csv);
+                    triggerBrowserDownload(bytes, 'dailybudget_transactions.csv');
+                    setStatusBanner(
+                      `Esportazione CSV completata (${transactions.length} transazioni in dailybudget_transactions.csv).`
+                    );
+                  }}
+                >
+                  <Download size={15} /> Esporta CSV Transazioni
+                </button>
+              </div>
+
+              <div className="grid-2">
+                {/* Colonna 1: Import CSV con Deduplica */}
+                <div
+                  style={{
+                    padding: '0.9rem',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.65rem',
+                  }}
+                >
+                  <strong style={{ fontSize: '0.86rem' }}>
+                    Importa Estratto Conto CSV (Formato: Data;Descrizione;Importo;Valuta)
+                  </strong>
+                  <textarea
+                    id="textarea-csv-import"
+                    className="input mono-num"
+                    rows={4}
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '0.76rem' }}
+                    value={csvImportContent}
+                    onChange={(e) => setCsvImportContent(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                      Conto target: <strong>{selectedAccount?.name ?? accounts[0]?.name}</strong>
+                    </span>
+                    <button
+                      id="btn-import-csv"
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={async () => {
+                        if (!repoRef.current) return;
+                        const targetAccId = txAccountId || accounts[0]?.id;
+                        if (!targetAccId) return;
+                        const expCatId =
+                          categories.find((c) => c.type === 'expense')?.id ??
+                          categories[0]?.id;
+                        const res = repoRef.current.importTransactionsFromCsv({
+                          accountId: targetAccId,
+                          csvContent: csvImportContent,
+                          mapping: {
+                            dateColumnIndex: 0,
+                            descriptionColumnIndex: 1,
+                            amountColumnIndex: 2,
+                            currencyColumnIndex: 3,
+                            delimiter: ';',
+                            hasHeaderRow: true,
+                          },
+                          defaultCategoryId: expCatId,
+                        });
+                        await syncAndRefresh(repoRef.current);
+                        setStatusBanner(
+                          `Import CSV completato: ${res.importedCount} nuove transazioni importate, ${res.skippedDuplicatesCount} duplicati ignorati.`
+                        );
+                      }}
+                    >
+                      <Upload size={14} /> Importa CSV con Deduplica
+                    </button>
+                  </div>
+                </div>
+
+                {/* Colonna 2: Smart Hybrid Receipt Attachment Uploader */}
+                <div
+                  style={{
+                    padding: '0.9rem',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.65rem',
+                  }}
+                >
+                  <strong style={{ fontSize: '0.86rem' }}>
+                    <Paperclip size={14} style={{ verticalAlign: 'middle' }} /> Allega Scontrino / Ricevuta Ibrida (<code>inline_blob</code> &le; 500 KB)
+                  </strong>
+
+                  <div className="field">
+                    <label htmlFor="select-attachment-tx">Transazione Collegata</label>
+                    <select
+                      id="select-attachment-tx"
+                      className="select"
+                      value={attachmentTxId || transactions[0]?.id || ''}
+                      onChange={(e) => {
+                        const nextTxId = e.target.value;
+                        setAttachmentTxId(nextTxId);
+                        if (repoRef.current && nextTxId) {
+                          setRecentAttachments(
+                            repoRef.current.getAttachmentsForTransaction(nextTxId)
+                          );
+                        }
+                      }}
+                    >
+                      {transactions.slice(0, 15).map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.date} — {t.description || t.type} ({formatCents(t.base_amount)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <input
+                      id="input-upload-receipt"
+                      type="file"
+                      accept="image/*,application/pdf"
+                      style={{ fontSize: '0.76rem' }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        const targetTxId = attachmentTxId || transactions[0]?.id;
+                        if (!file || !repoRef.current || !targetTxId) return;
+                        const processed = await compressReceiptImageIfPossible(file);
+                        const att = repoRef.current.createAttachment({
+                          transactionId: targetTxId,
+                          fileName: processed.fileName,
+                          mimeType: processed.mimeType,
+                          dataBytes: processed.bytes,
+                        });
+                        setRecentAttachments(
+                          repoRef.current.getAttachmentsForTransaction(targetTxId)
+                        );
+                        await syncAndRefresh(repoRef.current);
+                        setStatusBanner(
+                          `Allegato "${att.file_name}" (${(processed.bytes.byteLength / 1024).toFixed(1)} KB) salvato con storage_type = "${att.storage_type}".`
+                        );
+                      }}
+                    />
+                  </div>
+
+                  {recentAttachments.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                      {recentAttachments.map((att) => (
+                        <span key={att.id} className="chip override-include">
+                          <Paperclip size={11} /> {att.file_name} [{att.storage_type}]
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
           </>
         )}
 
@@ -2161,6 +2533,41 @@ export default function App() {
                       </option>
                     ))}
                   </select>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <label
+                      htmlFor="select-tricount-competence-mode"
+                      style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
+                    >
+                      Modalità Quote a Debito:
+                    </label>
+                    <select
+                      id="select-tricount-competence-mode"
+                      className="select"
+                      style={{ width: 'auto', fontSize: '0.78rem' }}
+                      value={String(dashboard.settings.include_tricount_owes_immediately)}
+                      onChange={async (e) => {
+                        if (!repoRef.current) return;
+                        const val = e.target.value;
+                        repoRef.current.updateWorkspaceSettings({
+                          includeTricountOwesImmediately: val === '1',
+                        });
+                        await syncAndRefresh(repoRef.current);
+                        setStatusBanner(
+                          val === '1'
+                            ? 'Tricount impostato su Competenza Economica (include_tricount_owes_immediately = 1).'
+                            : 'Tricount impostato su Criterio di Cassa al Rimborso (include_tricount_owes_immediately = 0).'
+                        );
+                      }}
+                    >
+                      <option value="1">
+                        1 — Competenza Economica (Impatto immediato alla data spesa)
+                      </option>
+                      <option value="0">
+                        0 — Criterio di Cassa (Impatto al Rimborso tricount_settlement)
+                      </option>
+                    </select>
+                  </div>
                 </div>
 
                 <form
@@ -3056,6 +3463,7 @@ export default function App() {
                     if (!repoRef.current || !cryptoAssetId) return;
                     repoRef.current.createCryptoTransaction({
                       assetId: cryptoAssetId,
+                      linkedAccountId: cryptoLinkedAccountId || null,
                       type: cryptoTxType,
                       quantity: cryptoQty,
                       pricePerUnitBaseCents:
@@ -3063,13 +3471,19 @@ export default function App() {
                           ? 0
                           : parseMajorToCents(cryptoPriceMajor),
                       feeBaseCents: parseMajorToCents(cryptoFeeMajor),
+                      countInBudgetAsPac:
+                        cryptoTxType === 'buy' && Boolean(cryptoLinkedAccountId)
+                          ? cryptoCountPac
+                          : false,
                       date: referenceDate,
                       notes: cryptoNotes.trim() || undefined,
                     });
                     setCryptoNotes('');
                     await syncAndRefresh(repoRef.current);
                     setStatusBanner(
-                      'Operazione Crypto salvata: WAC e widget_snapshot ricalcolati.'
+                      cryptoLinkedAccountId
+                        ? 'Operazione Crypto + movimento Fiat bancario collegato registrati (WAC e widget_snapshot aggiornati).'
+                        : 'Operazione Crypto salvata: WAC e widget_snapshot ricalcolati.'
                     );
                   }}
                   style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}
@@ -3152,16 +3566,59 @@ export default function App() {
                     </div>
 
                     <div className="field">
-                      <label htmlFor="crypto-notes">Note</label>
-                      <input
-                        id="crypto-notes"
-                        className="input"
-                        placeholder="es. PAC mensile / Staking nativo"
-                        value={cryptoNotes}
-                        onChange={(e) => setCryptoNotes(e.target.value)}
-                      />
+                      <label htmlFor="crypto-linked-account">
+                        Conto Bancario Fiat Collegato (<code>linked_account_id</code>)
+                      </label>
+                      <select
+                        id="crypto-linked-account"
+                        className="select"
+                        value={cryptoLinkedAccountId}
+                        onChange={(e) => setCryptoLinkedAccountId(e.target.value)}
+                      >
+                        <option value="">-- Nessun movimento Fiat automatico --</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({formatCents(a.cached_balance, a.currency)})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
+
+                  <div className="field">
+                    <label htmlFor="crypto-notes">Note</label>
+                    <input
+                      id="crypto-notes"
+                      className="input"
+                      placeholder="es. PAC mensile / Staking nativo"
+                      value={cryptoNotes}
+                      onChange={(e) => setCryptoNotes(e.target.value)}
+                    />
+                  </div>
+
+                  <label
+                    style={{
+                      fontSize: '0.8rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      cursor:
+                        cryptoTxType === 'buy' && cryptoLinkedAccountId
+                          ? 'pointer'
+                          : 'not-allowed',
+                      opacity:
+                        cryptoTxType === 'buy' && cryptoLinkedAccountId ? 1 : 0.6,
+                    }}
+                  >
+                    <input
+                      id="crypto-count-pac"
+                      type="checkbox"
+                      disabled={!(cryptoTxType === 'buy' && cryptoLinkedAccountId)}
+                      checked={cryptoCountPac}
+                      onChange={(e) => setCryptoCountPac(e.target.checked)}
+                    />
+                    Conta come PAC nel DailyBudget (<code>include_in_budget = 1</code>)
+                  </label>
 
                   <button type="submit" className="btn btn-primary">
                     <HardDrive size={15} /> Registra nel Portfolio Crypto

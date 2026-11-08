@@ -3,11 +3,16 @@ import {
   calculateCryptoAssetMetrics,
   calculateDailyBudget,
   calculateTricountSettlements,
+  computeBudgetCycleWindow,
   computeMultiCurrencyTricountImpact,
+  computeTransactionDedupeKey,
   computeTricountExpenseSplits,
   doesTransactionAffectBudget,
   evaluateDueRecurringRules,
+  parseBankCsv,
+  type BudgetCycleWindow,
   type CryptoHoldingMetrics,
+  type CsvColumnMapping,
   type DailyBudgetInput,
   type DailyBudgetResult,
   type MemberBalance,
@@ -21,6 +26,7 @@ import {
   SCHEMA_V2_SQL,
   type AccountRow,
   type AccountType,
+  type AttachmentRow,
   type CategoryRow,
   type CryptoAssetRow,
   type CryptoTransactionRow,
@@ -29,6 +35,7 @@ import {
   type RecurringRuleRow,
   type TagRow,
   type TransactionRow,
+  type TransactionSplitRow,
   type TricountExpenseRow,
   type TricountGroupRow,
   type TricountMemberRow,
@@ -36,6 +43,9 @@ import {
   type WidgetSnapshotRow,
   type WorkspaceSettingsRow,
 } from './schema.ts';
+import type { SyncDeltaPacket } from './sync-merge.ts';
+
+export const MAX_INLINE_BLOB_BYTES = 500 * 1024; // 500 KB
 
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 
@@ -134,6 +144,7 @@ export interface CryptoPortfolioSummary {
 
 export interface DashboardSummary {
   settings: WorkspaceSettingsRow;
+  cycleWindow: BudgetCycleWindow;
   dailyBudgetInput: DailyBudgetInput;
   dailyBudgetResult: DailyBudgetResult;
   widgetSnapshot: WidgetSnapshotRow;
@@ -201,7 +212,10 @@ export class DailyBudgetRepository {
     return this.db.export();
   }
 
-  private queryAll<T>(sql: string, params: Array<string | number | null> = []): T[] {
+  private queryAll<T>(
+    sql: string,
+    params: Array<string | number | Uint8Array | null> = []
+  ): T[] {
     const stmt = this.db.prepare(sql);
     stmt.bind(params);
     const rows: T[] = [];
@@ -212,7 +226,10 @@ export class DailyBudgetRepository {
     return rows;
   }
 
-  private queryOne<T>(sql: string, params: Array<string | number | null> = []): T | null {
+  private queryOne<T>(
+    sql: string,
+    params: Array<string | number | Uint8Array | null> = []
+  ): T | null {
     const rows = this.queryAll<T>(sql, params);
     return rows.length > 0 ? rows[0] : null;
   }
@@ -243,7 +260,7 @@ export class DailyBudgetRepository {
     includeTricountOwesImmediately?: boolean;
   }): WorkspaceSettingsRow {
     const current = this.getWorkspaceSettings();
-    const now = Date.now();
+    const now = Math.max(Date.now(), current.updated_at + 1);
     this.db.run(
       `UPDATE workspace_settings
        SET name = ?,
@@ -546,9 +563,10 @@ export class DailyBudgetRepository {
     );
     if (!tx) return;
 
+    const nextUpdatedAt = Math.max(Date.now(), tx.updated_at + 1);
     this.db.run(
       `UPDATE transactions SET is_deleted = 1, updated_at = ? WHERE id = ?`,
-      [Date.now(), transactionId]
+      [nextUpdatedAt, transactionId]
     );
     this.recomputeAccountBalance(tx.account_id);
     if (tx.to_account_id) {
@@ -567,6 +585,8 @@ export class DailyBudgetRepository {
     accountId?: string;
     tagId?: string;
     monthPrefix?: string; // YYYY-MM
+    dateFrom?: string; // YYYY-MM-DD
+    dateTo?: string; // YYYY-MM-DD
   }): EnrichedTransaction[] {
     let whereSql = `t.is_deleted = 0`;
     const params: Array<string | number | null> = [];
@@ -582,6 +602,14 @@ export class DailyBudgetRepository {
     if (filter?.monthPrefix) {
       whereSql += ` AND t.date LIKE ?`;
       params.push(`${filter.monthPrefix}%`);
+    }
+    if (filter?.dateFrom) {
+      whereSql += ` AND t.date >= ?`;
+      params.push(filter.dateFrom);
+    }
+    if (filter?.dateTo) {
+      whereSql += ` AND t.date <= ?`;
+      params.push(filter.dateTo);
     }
 
     const rows = this.queryAll<
@@ -650,6 +678,225 @@ export class DailyBudgetRepository {
     }
 
     return enriched;
+  }
+
+  sweepSavingsToAccount(input: {
+    fromAccountId: string;
+    toSavingsAccountId: string;
+    amountCents: number;
+    date: string;
+    description?: string;
+  }): EnrichedTransaction {
+    const fromAccount = this.queryOne<AccountRow>(
+      `SELECT * FROM accounts WHERE id = ?`,
+      [input.fromAccountId]
+    );
+    const currency =
+      fromAccount?.currency ?? this.getWorkspaceSettings().base_currency;
+
+    return this.createTransaction({
+      accountId: input.fromAccountId,
+      toAccountId: input.toSavingsAccountId,
+      type: 'transfer',
+      amountCents: Math.abs(Math.round(input.amountCents)),
+      currency,
+      includeInBudget: null,
+      date: input.date,
+      description:
+        input.description ?? 'Accantonamento Risparmio Fine Ciclo',
+    });
+  }
+
+  // ---------------------------------------------------------
+  // 3A. SMART HYBRID ATTACHMENTS & BANK CSV IMPORT/EXPORT
+  // ---------------------------------------------------------
+  getAttachmentsForTransaction(transactionId: string): AttachmentRow[] {
+    return this.queryAll<AttachmentRow>(
+      `SELECT * FROM attachments WHERE transaction_id = ? ORDER BY created_at ASC`,
+      [transactionId]
+    );
+  }
+
+  createAttachment(input: {
+    id?: string;
+    transactionId: string;
+    fileName: string;
+    mimeType: string;
+    dataBytes?: Uint8Array | null;
+    externalPath?: string | null;
+  }): AttachmentRow {
+    const id = input.id ?? makeId('att');
+    const now = Date.now();
+    const isSmallInline =
+      input.dataBytes != null &&
+      input.dataBytes.byteLength > 0 &&
+      input.dataBytes.byteLength <= MAX_INLINE_BLOB_BYTES;
+
+    let storageType: 'inline_blob' | 'local_path' | 'cloud_url';
+    let blobData: Uint8Array | null = null;
+    let externalPath: string | null = null;
+
+    if (isSmallInline) {
+      storageType = 'inline_blob';
+      blobData = input.dataBytes!;
+    } else if (input.externalPath && /^https?:\/\//i.test(input.externalPath)) {
+      storageType = 'cloud_url';
+      externalPath = input.externalPath;
+    } else {
+      storageType = 'local_path';
+      externalPath = input.externalPath ?? `local://attachments/${input.fileName}`;
+    }
+
+    this.db.run(
+      `INSERT INTO attachments (
+        id, transaction_id, file_name, mime_type, storage_type, blob_data, external_path, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        input.transactionId,
+        input.fileName,
+        input.mimeType,
+        storageType,
+        blobData,
+        externalPath,
+        now,
+      ]
+    );
+
+    return this.queryOne<AttachmentRow>(
+      `SELECT * FROM attachments WHERE id = ?`,
+      [id]
+    )!;
+  }
+
+  deleteAttachment(attachmentId: string): void {
+    this.db.run(`DELETE FROM attachments WHERE id = ?`, [attachmentId]);
+  }
+
+  importTransactionsFromCsv(input: {
+    accountId: string;
+    csvContent: string;
+    mapping: CsvColumnMapping;
+    defaultCategoryId?: string | null;
+  }): { importedCount: number; skippedDuplicatesCount: number } {
+    const parsedRows = parseBankCsv(input.csvContent, input.mapping);
+    const existingTxs = this.getTransactionsWithDetails({
+      accountId: input.accountId,
+    });
+    const categories = this.getCategories();
+
+    const seenKeys = new Set<string>();
+    for (const tx of existingTxs) {
+      if (tx.account_id === input.accountId) {
+        seenKeys.add(
+          computeTransactionDedupeKey(
+            tx.date,
+            tx.type,
+            tx.amount,
+            tx.description ?? ''
+          )
+        );
+      }
+    }
+
+    let importedCount = 0;
+    let skippedDuplicatesCount = 0;
+
+    for (const row of parsedRows) {
+      if (seenKeys.has(row.dedupeKey)) {
+        skippedDuplicatesCount += 1;
+        continue;
+      }
+      seenKeys.add(row.dedupeKey);
+
+      const rateToBase = this.getRateToBase(row.currency);
+      const baseAmountCents = Math.round(row.amountCents * rateToBase);
+
+      let resolvedCategoryId: string | null = null;
+      if (row.categoryHint) {
+        const matchedCat = categories.find(
+          (c) =>
+            c.type === row.type &&
+            c.name.toLowerCase() === row.categoryHint!.toLowerCase()
+        );
+        if (matchedCat) {
+          resolvedCategoryId = matchedCat.id;
+        }
+      }
+      if (!resolvedCategoryId && input.defaultCategoryId) {
+        resolvedCategoryId = input.defaultCategoryId;
+      }
+
+      const matchedCatObj = resolvedCategoryId
+        ? categories.find((c) => c.id === resolvedCategoryId)
+        : undefined;
+
+      this.createTransaction({
+        accountId: input.accountId,
+        type: row.type,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        exchangeRateToBase: rateToBase,
+        baseAmountCents,
+        budgetBaseAmountCents: baseAmountCents,
+        isFixed: matchedCatObj?.is_fixed_expense === 1,
+        date: row.date,
+        description: row.description,
+        splits: resolvedCategoryId
+          ? [
+              {
+                categoryId: resolvedCategoryId,
+                amountBaseCents: baseAmountCents,
+              },
+            ]
+          : undefined,
+      });
+
+      importedCount += 1;
+    }
+
+    return { importedCount, skippedDuplicatesCount };
+  }
+
+  exportTransactionsToCsv(): string {
+    const txs = this.getTransactionsWithDetails();
+    const header =
+      'date,type,account,description,amount,currency,base_amount_cents,budget_base_amount_cents,affects_budget,categories,tags';
+
+    const escapeCsvField = (val: string): string => {
+      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+        return `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    };
+
+    const lines = [header];
+    for (const tx of txs) {
+      const signedMajor =
+        tx.type === 'expense'
+          ? (-Math.abs(tx.amount) / 100).toFixed(2)
+          : (tx.amount / 100).toFixed(2);
+      const cats = tx.splits.map((s) => s.category_name).join('|');
+      const tags = tx.tags.map((t) => t.name).join('|');
+
+      lines.push(
+        [
+          tx.date,
+          tx.type,
+          escapeCsvField(tx.account_name),
+          escapeCsvField(tx.description ?? ''),
+          signedMajor,
+          tx.currency,
+          String(tx.base_amount),
+          String(tx.budget_base_amount),
+          tx.effective_affects_budget ? '1' : '0',
+          escapeCsvField(cats),
+          escapeCsvField(tags),
+        ].join(',')
+      );
+    }
+
+    return lines.join('\n');
   }
 
   // ---------------------------------------------------------
@@ -1131,17 +1378,23 @@ export class DailyBudgetRepository {
     });
 
     if (input.personalAccountId && (fromMember?.is_me === 1 || toMember?.is_me === 1)) {
+      const settings = this.getWorkspaceSettings();
       const isOutgoing = fromMember?.is_me === 1;
-      const signedBase = isOutgoing ? input.amountCents : -input.amountCents;
+      const rateToBase = this.getRateToBase(group.default_currency);
+      const baseAmountAbs = Math.round(input.amountCents * rateToBase);
+      const signedBase = isOutgoing ? baseAmountAbs : -baseAmountAbs;
+      const affectsBudgetOnSettlement =
+        isOutgoing && settings.include_tricount_owes_immediately === 0;
 
       this.createTransaction({
         accountId: input.personalAccountId,
         type: 'tricount_settlement',
         amountCents: input.amountCents,
         currency: group.default_currency,
+        exchangeRateToBase: rateToBase,
         baseAmountCents: signedBase,
-        budgetBaseAmountCents: 0,
-        includeInBudget: null, // Escluso di default dal budget per Regola C
+        budgetBaseAmountCents: affectsBudgetOnSettlement ? baseAmountAbs : 0,
+        includeInBudget: affectsBudgetOnSettlement ? 1 : null,
         date: input.date,
         description: `[Tricount Settlement] ${settlementTitle}`,
       });
@@ -1289,6 +1542,7 @@ export class DailyBudgetRepository {
     quantity: string;
     pricePerUnitBaseCents: number;
     feeBaseCents?: number;
+    countInBudgetAsPac?: boolean;
     date: string;
     notes?: string;
   }): CryptoTransactionRow {
@@ -1310,6 +1564,54 @@ export class DailyBudgetRepository {
         Date.now(),
       ]
     );
+
+    if (
+      input.linkedAccountId &&
+      (input.type === 'buy' || input.type === 'sell')
+    ) {
+      const asset = this.queryOne<CryptoAssetRow>(
+        `SELECT * FROM crypto_assets WHERE id = ?`,
+        [input.assetId]
+      );
+      const qtyNum = Number.parseFloat(input.quantity) || 0;
+      const baseCurrency = this.getWorkspaceSettings().base_currency;
+
+      if (input.type === 'buy' && qtyNum > 0) {
+        const totalFiatCents =
+          Math.round(qtyNum * input.pricePerUnitBaseCents) +
+          Math.round(input.feeBaseCents ?? 0);
+        this.createTransaction({
+          accountId: input.linkedAccountId,
+          type: 'expense',
+          amountCents: totalFiatCents,
+          currency: baseCurrency,
+          baseAmountCents: totalFiatCents,
+          budgetBaseAmountCents: totalFiatCents,
+          includeInBudget: input.countInBudgetAsPac ? 1 : 0,
+          isFixed: Boolean(input.countInBudgetAsPac),
+          date: input.date,
+          description: `[Crypto BUY] ${input.quantity} ${asset?.symbol ?? ''}`.trim(),
+        });
+      } else if (input.type === 'sell' && qtyNum > 0) {
+        const proceedsFiatCents = Math.max(
+          0,
+          Math.round(qtyNum * input.pricePerUnitBaseCents) -
+            Math.round(input.feeBaseCents ?? 0)
+        );
+        this.createTransaction({
+          accountId: input.linkedAccountId,
+          type: 'income',
+          amountCents: proceedsFiatCents,
+          currency: baseCurrency,
+          baseAmountCents: proceedsFiatCents,
+          budgetBaseAmountCents: 0,
+          includeInBudget: 0,
+          date: input.date,
+          description: `[Crypto SELL] ${input.quantity} ${asset?.symbol ?? ''}`.trim(),
+        });
+      }
+    }
+
     this.recomputeWidgetSnapshot();
     return this.queryOne<CryptoTransactionRow>(
       `SELECT * FROM crypto_transactions WHERE id = ?`,
@@ -1380,13 +1682,10 @@ export class DailyBudgetRepository {
   } {
     const targetDate = refDateStr ?? this.referenceDate;
     const settings = this.getWorkspaceSettings();
-
-    const [yearStr, monthStr, dayStr] = targetDate.split('-');
-    const year = Number.parseInt(yearStr, 10);
-    const month = Number.parseInt(monthStr, 10);
-    const currentDayOfMonth = Number.parseInt(dayStr, 10);
-    const totalDaysInMonth = new Date(year, month, 0).getDate();
-    const monthPrefix = `${yearStr}-${monthStr}`;
+    const cycleWindow = computeBudgetCycleWindow(
+      targetDate,
+      settings.month_start_day
+    );
 
     // Spese fisse pianificate: somma dei monthly_limit delle categorie con is_fixed_expense = 1
     const fixedCategories = this.queryAll<CategoryRow>(
@@ -1397,17 +1696,32 @@ export class DailyBudgetRepository {
       0
     );
 
-    const monthTxs = this.getTransactionsWithDetails({ monthPrefix });
+    const cycleTxs = this.getTransactionsWithDetails({
+      dateFrom: cycleWindow.cycleStartDate,
+      dateTo: cycleWindow.cycleEndDate,
+    });
 
     let fixedExpensesActualCents = 0;
     let variableSpentBeforeTodayCents = 0;
     let variableSpentTodayCents = 0;
 
-    for (const tx of monthTxs) {
+    for (const tx of cycleTxs) {
       if (!tx.effective_affects_budget) continue;
-      if (tx.type === 'income') continue; // Il pool di spesa misura le uscite rispetto al MonthlyBudgetTarget
 
       const impactCents = Math.abs(tx.budget_base_amount);
+      if (tx.type === 'income') {
+        // Solo entrate marcate esplicitamente con include_in_budget === 1 (Rimborso Spesa)
+        // riducono le spese variabili del ciclo. Gli stipendi normali non gonfiano il DailyBudget.
+        if (tx.include_in_budget === 1) {
+          if (tx.date < targetDate) {
+            variableSpentBeforeTodayCents -= impactCents;
+          } else if (tx.date === targetDate) {
+            variableSpentTodayCents -= impactCents;
+          }
+        }
+        continue;
+      }
+
       if (tx.is_fixed === 1) {
         fixedExpensesActualCents += impactCents;
       } else {
@@ -1419,14 +1733,17 @@ export class DailyBudgetRepository {
       }
     }
 
+    variableSpentBeforeTodayCents = Math.max(0, variableSpentBeforeTodayCents);
+    variableSpentTodayCents = Math.max(0, variableSpentTodayCents);
+
     const input: DailyBudgetInput = {
       monthlyBudgetCents: settings.monthly_budget_target,
       fixedExpensesPlannedCents,
       fixedExpensesActualCents,
       variableSpentBeforeTodayCents,
       variableSpentTodayCents,
-      totalDaysInMonth,
-      currentDayOfMonth,
+      totalDaysInMonth: cycleWindow.totalDaysInCycle,
+      currentDayOfMonth: cycleWindow.currentDayOfCycle,
     };
 
     const result = calculateDailyBudget(input);
@@ -1473,8 +1790,11 @@ export class DailyBudgetRepository {
 
   getDashboardSummary(refDateStr?: string): DashboardSummary {
     const targetDate = refDateStr ?? this.referenceDate;
-    const monthPrefix = targetDate.slice(0, 7);
     const settings = this.getWorkspaceSettings();
+    const cycleWindow = computeBudgetCycleWindow(
+      targetDate,
+      settings.month_start_day
+    );
     const { input, result } = this.computeDailyBudgetForDate(targetDate);
     const widgetSnapshot = this.recomputeWidgetSnapshot(targetDate);
     const accounts = this.getAccounts();
@@ -1487,10 +1807,13 @@ export class DailyBudgetRepository {
     const totalNetWorthCents = totalBankBalanceCents + cryptoSummary.totalValueCents;
 
     const categories = this.getCategories().filter((c) => c.type === 'expense');
-    const monthTxs = this.getTransactionsWithDetails({ monthPrefix });
+    const cycleTxs = this.getTransactionsWithDetails({
+      dateFrom: cycleWindow.cycleStartDate,
+      dateTo: cycleWindow.cycleEndDate,
+    });
 
     const spentByCategory = new Map<string, number>();
-    for (const tx of monthTxs) {
+    for (const tx of cycleTxs) {
       if (!tx.effective_affects_budget || tx.type === 'income') continue;
       if (tx.splits.length > 0) {
         for (const s of tx.splits) {
@@ -1514,6 +1837,7 @@ export class DailyBudgetRepository {
 
     return {
       settings,
+      cycleWindow,
       dailyBudgetInput: input,
       dailyBudgetResult: result,
       widgetSnapshot,
@@ -1522,5 +1846,583 @@ export class DailyBudgetRepository {
       cryptoSummary,
       categoryBreakdown,
     };
+  }
+
+  // ---------------------------------------------------------
+  // 8. ROW-LEVEL LAST-WRITE-WINS (LWW) SYNC ENGINE
+  // ---------------------------------------------------------
+  exportRawTablesForSync(sinceTimestamp: number = 0): SyncDeltaPacket {
+    const since = Math.max(0, Math.trunc(sinceTimestamp));
+    return {
+      version: 2,
+      exportedAt: Date.now(),
+      sinceTimestamp: since,
+      tables: {
+        workspace_settings: this.queryAll<WorkspaceSettingsRow>(
+          `SELECT * FROM workspace_settings WHERE updated_at >= ?`,
+          [since]
+        ),
+        accounts: this.queryAll<AccountRow>(
+          `SELECT * FROM accounts WHERE updated_at >= ?`,
+          [since]
+        ),
+        categories: this.queryAll<CategoryRow>(
+          `SELECT * FROM categories WHERE updated_at >= ?`,
+          [since]
+        ),
+        tags: this.queryAll<TagRow>(
+          `SELECT * FROM tags WHERE updated_at >= ?`,
+          [since]
+        ),
+        loans: this.queryAll<LoanRow>(
+          `SELECT * FROM loans WHERE updated_at >= ?`,
+          [since]
+        ),
+        tricount_groups: this.queryAll<TricountGroupRow>(
+          `SELECT * FROM tricount_groups WHERE updated_at >= ?`,
+          [since]
+        ),
+        tricount_members: this.queryAll<TricountMemberRow>(
+          `SELECT * FROM tricount_members`
+        ),
+        tricount_expenses: this.queryAll<TricountExpenseRow>(
+          `SELECT * FROM tricount_expenses WHERE updated_at >= ?`,
+          [since]
+        ),
+        tricount_splits: this.queryAll<TricountSplitRow>(
+          `SELECT * FROM tricount_splits`
+        ),
+        recurring_rules: this.queryAll<RecurringRuleRow>(
+          `SELECT * FROM recurring_rules WHERE updated_at >= ?`,
+          [since]
+        ),
+        transactions: this.queryAll<TransactionRow>(
+          `SELECT * FROM transactions WHERE updated_at >= ?`,
+          [since]
+        ),
+        transaction_splits: this.queryAll<TransactionSplitRow>(
+          `SELECT * FROM transaction_splits`
+        ),
+        transaction_tags: this.queryAll<{ transaction_id: string; tag_id: string }>(
+          `SELECT * FROM transaction_tags`
+        ),
+        crypto_assets: this.queryAll<CryptoAssetRow>(
+          `SELECT * FROM crypto_assets WHERE last_price_update >= ?`,
+          [since]
+        ),
+        crypto_transactions: this.queryAll<CryptoTransactionRow>(
+          `SELECT * FROM crypto_transactions WHERE updated_at >= ?`,
+          [since]
+        ),
+      },
+    };
+  }
+
+  applyRawTablesLwwMerge(packet: SyncDeltaPacket): { mergedRowsCount: number } {
+    let mergedRowsCount = 0;
+
+    // 1. workspace_settings
+    for (const row of packet.tables.workspace_settings) {
+      const local = this.queryOne<WorkspaceSettingsRow>(
+        `SELECT * FROM workspace_settings WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO workspace_settings (id, name, base_currency, monthly_budget_target, month_start_day, include_tricount_owes_immediately, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             base_currency = excluded.base_currency,
+             monthly_budget_target = excluded.monthly_budget_target,
+             month_start_day = excluded.month_start_day,
+             include_tricount_owes_immediately = excluded.include_tricount_owes_immediately,
+             updated_at = excluded.updated_at`,
+          [
+            row.id,
+            row.name,
+            row.base_currency,
+            row.monthly_budget_target,
+            row.month_start_day,
+            row.include_tricount_owes_immediately,
+            row.updated_at,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 2. accounts
+    for (const row of packet.tables.accounts) {
+      const local = this.queryOne<AccountRow>(
+        `SELECT * FROM accounts WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO accounts (id, name, type, currency, initial_balance, cached_balance, credit_limit, include_in_budget, color, icon, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             type = excluded.type,
+             currency = excluded.currency,
+             initial_balance = excluded.initial_balance,
+             cached_balance = excluded.cached_balance,
+             credit_limit = excluded.credit_limit,
+             include_in_budget = excluded.include_in_budget,
+             color = excluded.color,
+             icon = excluded.icon,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.name,
+            row.type,
+            row.currency,
+            row.initial_balance,
+            row.cached_balance,
+            row.credit_limit,
+            row.include_in_budget,
+            row.color,
+            row.icon,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 3. categories
+    for (const row of packet.tables.categories) {
+      const local = this.queryOne<CategoryRow>(
+        `SELECT * FROM categories WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO categories (id, name, type, monthly_limit, is_fixed_expense, color, icon, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             type = excluded.type,
+             monthly_limit = excluded.monthly_limit,
+             is_fixed_expense = excluded.is_fixed_expense,
+             color = excluded.color,
+             icon = excluded.icon,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.name,
+            row.type,
+            row.monthly_limit,
+            row.is_fixed_expense,
+            row.color,
+            row.icon,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 4. tags
+    for (const row of packet.tables.tags) {
+      const local = this.queryOne<TagRow>(
+        `SELECT * FROM tags WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO tags (id, name, color, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             color = excluded.color,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [row.id, row.name, row.color, row.updated_at, row.is_deleted]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 5. loans
+    for (const row of packet.tables.loans) {
+      const local = this.queryOne<LoanRow>(
+        `SELECT * FROM loans WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO loans (id, name, counterparty_name, type, currency, principal_amount, remaining_amount, interest_rate_pct, start_date, due_date, count_installments_in_budget, status, notes, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             counterparty_name = excluded.counterparty_name,
+             type = excluded.type,
+             currency = excluded.currency,
+             principal_amount = excluded.principal_amount,
+             remaining_amount = excluded.remaining_amount,
+             interest_rate_pct = excluded.interest_rate_pct,
+             start_date = excluded.start_date,
+             due_date = excluded.due_date,
+             count_installments_in_budget = excluded.count_installments_in_budget,
+             status = excluded.status,
+             notes = excluded.notes,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.name,
+            row.counterparty_name,
+            row.type,
+            row.currency,
+            row.principal_amount,
+            row.remaining_amount,
+            row.interest_rate_pct,
+            row.start_date,
+            row.due_date,
+            row.count_installments_in_budget,
+            row.status,
+            row.notes,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 6. tricount_groups
+    for (const row of packet.tables.tricount_groups) {
+      const local = this.queryOne<TricountGroupRow>(
+        `SELECT * FROM tricount_groups WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO tricount_groups (id, name, default_currency, description, is_archived, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             default_currency = excluded.default_currency,
+             description = excluded.description,
+             is_archived = excluded.is_archived,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.name,
+            row.default_currency,
+            row.description,
+            row.is_archived,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 7. tricount_members
+    for (const row of packet.tables.tricount_members) {
+      const local = this.queryOne<TricountMemberRow>(
+        `SELECT * FROM tricount_members WHERE id = ?`,
+        [row.id]
+      );
+      if (!local) {
+        this.db.run(
+          `INSERT INTO tricount_members (id, group_id, name, is_me, linked_user_id, weight)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            row.id,
+            row.group_id,
+            row.name,
+            row.is_me,
+            row.linked_user_id,
+            row.weight,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 8. tricount_expenses & tricount_splits
+    const mergedExpenseIds = new Set<string>();
+    for (const row of packet.tables.tricount_expenses) {
+      const local = this.queryOne<TricountExpenseRow>(
+        `SELECT * FROM tricount_expenses WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO tricount_expenses (id, group_id, paid_by_member_id, title, amount, currency, exchange_rate_to_group, group_amount, expense_type, date, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             group_id = excluded.group_id,
+             paid_by_member_id = excluded.paid_by_member_id,
+             title = excluded.title,
+             amount = excluded.amount,
+             currency = excluded.currency,
+             exchange_rate_to_group = excluded.exchange_rate_to_group,
+             group_amount = excluded.group_amount,
+             expense_type = excluded.expense_type,
+             date = excluded.date,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.group_id,
+            row.paid_by_member_id,
+            row.title,
+            row.amount,
+            row.currency,
+            row.exchange_rate_to_group,
+            row.group_amount,
+            row.expense_type,
+            row.date,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedExpenseIds.add(row.id);
+        mergedRowsCount += 1;
+      }
+    }
+
+    for (const split of packet.tables.tricount_splits) {
+      if (mergedExpenseIds.has(split.expense_id)) {
+        this.db.run(
+          `INSERT INTO tricount_splits (id, expense_id, member_id, split_mode, share_value, owed_group_amount)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             split_mode = excluded.split_mode,
+             share_value = excluded.share_value,
+             owed_group_amount = excluded.owed_group_amount`,
+          [
+            split.id,
+            split.expense_id,
+            split.member_id,
+            split.split_mode,
+            split.share_value,
+            split.owed_group_amount,
+          ]
+        );
+      }
+    }
+
+    // 9. recurring_rules
+    for (const row of packet.tables.recurring_rules) {
+      const local = this.queryOne<RecurringRuleRow>(
+        `SELECT * FROM recurring_rules WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO recurring_rules (id, account_id, category_id, amount, currency, description, frequency, interval_count, next_occurrence_date, auto_commit, is_active, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             account_id = excluded.account_id,
+             category_id = excluded.category_id,
+             amount = excluded.amount,
+             currency = excluded.currency,
+             description = excluded.description,
+             frequency = excluded.frequency,
+             interval_count = excluded.interval_count,
+             next_occurrence_date = excluded.next_occurrence_date,
+             auto_commit = excluded.auto_commit,
+             is_active = excluded.is_active,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.account_id,
+            row.category_id,
+            row.amount,
+            row.currency,
+            row.description,
+            row.frequency,
+            row.interval_count,
+            row.next_occurrence_date,
+            row.auto_commit,
+            row.is_active,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // 10. transactions, transaction_splits & transaction_tags
+    const mergedTxIds = new Set<string>();
+    for (const row of packet.tables.transactions) {
+      const local = this.queryOne<TransactionRow>(
+        `SELECT * FROM transactions WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO transactions (
+             id, account_id, to_account_id, recurring_rule_id, loan_id, tricount_expense_id,
+             type, amount, currency, exchange_rate_to_base, base_amount,
+             include_in_budget, budget_base_amount, is_fixed,
+             date, created_at, description, updated_at, is_deleted
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             account_id = excluded.account_id,
+             to_account_id = excluded.to_account_id,
+             recurring_rule_id = excluded.recurring_rule_id,
+             loan_id = excluded.loan_id,
+             tricount_expense_id = excluded.tricount_expense_id,
+             type = excluded.type,
+             amount = excluded.amount,
+             currency = excluded.currency,
+             exchange_rate_to_base = excluded.exchange_rate_to_base,
+             base_amount = excluded.base_amount,
+             include_in_budget = excluded.include_in_budget,
+             budget_base_amount = excluded.budget_base_amount,
+             is_fixed = excluded.is_fixed,
+             date = excluded.date,
+             created_at = excluded.created_at,
+             description = excluded.description,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.account_id,
+            row.to_account_id,
+            row.recurring_rule_id,
+            row.loan_id,
+            row.tricount_expense_id,
+            row.type,
+            row.amount,
+            row.currency,
+            row.exchange_rate_to_base,
+            row.base_amount,
+            row.include_in_budget,
+            row.budget_base_amount,
+            row.is_fixed,
+            row.date,
+            row.created_at,
+            row.description,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedTxIds.add(row.id);
+        mergedRowsCount += 1;
+      }
+    }
+
+    for (const split of packet.tables.transaction_splits) {
+      if (mergedTxIds.has(split.transaction_id)) {
+        this.db.run(
+          `INSERT INTO transaction_splits (id, transaction_id, category_id, amount_base, notes)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             category_id = excluded.category_id,
+             amount_base = excluded.amount_base,
+             notes = excluded.notes`,
+          [
+            split.id,
+            split.transaction_id,
+            split.category_id,
+            split.amount_base,
+            split.notes,
+          ]
+        );
+      }
+    }
+
+    for (const tt of packet.tables.transaction_tags) {
+      if (mergedTxIds.has(tt.transaction_id)) {
+        this.db.run(
+          `INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)`,
+          [tt.transaction_id, tt.tag_id]
+        );
+      }
+    }
+
+    // 11. crypto_assets & crypto_transactions
+    for (const row of packet.tables.crypto_assets) {
+      const local = this.queryOne<CryptoAssetRow>(
+        `SELECT * FROM crypto_assets WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.last_price_update > local.last_price_update) {
+        this.db.run(
+          `INSERT INTO crypto_assets (id, symbol, name, current_price_base, price_change_24h_pct, alert_threshold_pct, last_price_update)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             symbol = excluded.symbol,
+             name = excluded.name,
+             current_price_base = excluded.current_price_base,
+             price_change_24h_pct = excluded.price_change_24h_pct,
+             alert_threshold_pct = excluded.alert_threshold_pct,
+             last_price_update = excluded.last_price_update`,
+          [
+            row.id,
+            row.symbol,
+            row.name,
+            row.current_price_base,
+            row.price_change_24h_pct,
+            row.alert_threshold_pct,
+            row.last_price_update,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    for (const row of packet.tables.crypto_transactions) {
+      const local = this.queryOne<CryptoTransactionRow>(
+        `SELECT * FROM crypto_transactions WHERE id = ?`,
+        [row.id]
+      );
+      if (!local || row.updated_at > local.updated_at) {
+        this.db.run(
+          `INSERT INTO crypto_transactions (id, asset_id, linked_account_id, type, quantity, price_per_unit_base, fee_base, date, notes, updated_at, is_deleted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             asset_id = excluded.asset_id,
+             linked_account_id = excluded.linked_account_id,
+             type = excluded.type,
+             quantity = excluded.quantity,
+             price_per_unit_base = excluded.price_per_unit_base,
+             fee_base = excluded.fee_base,
+             date = excluded.date,
+             notes = excluded.notes,
+             updated_at = excluded.updated_at,
+             is_deleted = excluded.is_deleted`,
+          [
+            row.id,
+            row.asset_id,
+            row.linked_account_id,
+            row.type,
+            row.quantity,
+            row.price_per_unit_base,
+            row.fee_base,
+            row.date,
+            row.notes,
+            row.updated_at,
+            row.is_deleted,
+          ]
+        );
+        mergedRowsCount += 1;
+      }
+    }
+
+    // Recompute all account balances & O(1) widget_snapshot
+    const allAccounts = this.queryAll<{ id: string }>(`SELECT id FROM accounts`);
+    for (const acc of allAccounts) {
+      this.recomputeAccountBalance(acc.id);
+    }
+    this.recomputeWidgetSnapshot();
+
+    return { mergedRowsCount };
   }
 }
