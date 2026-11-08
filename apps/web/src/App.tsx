@@ -29,7 +29,7 @@ import {
 import { CryptoTab } from './components/CryptoTab';
 import { DashboardTab } from './components/DashboardTab';
 import { LoansTab } from './components/LoansTab';
-import { PersistenceHeader, type ActiveTab } from './components/PersistenceHeader';
+import { PersistenceHeader, type ActiveTab, type ViewMode } from './components/PersistenceHeader';
 import { TransactionsTab } from './components/TransactionsTab';
 import { TricountTab } from './components/TricountTab';
 import {
@@ -47,6 +47,39 @@ export default function App() {
 
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dailybudget_view_mode') as ViewMode | null;
+      if (saved === 'auto' || saved === 'mobile' || saved === 'desktop') return saved;
+    }
+    return 'auto';
+  });
+
+  const [isMobileScreen, setIsMobileScreen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 860;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const onResize = () => {
+      setIsMobileScreen(window.innerWidth < 860);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const handleSetViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dailybudget_view_mode', mode);
+    }
+  }, []);
+
+  const effectiveMode: 'mobile' | 'desktop' =
+    viewMode === 'auto' ? (isMobileScreen ? 'mobile' : 'desktop') : viewMode;
+
   const [isReady, setIsReady] = useState(false);
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
   const [referenceDate, setReferenceDate] = useState<string>(() =>
@@ -276,12 +309,19 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-view-mode={effectiveMode}
+      data-view-preference={viewMode}
+    >
       <PersistenceHeader
         persistence={persistence}
         theme={theme}
         activeTab={activeTab}
         referenceDate={referenceDate}
+        viewMode={viewMode}
+        effectiveMode={effectiveMode}
+        onSetViewMode={handleSetViewMode}
         isPinEnabled={isPinEnabled}
         onLockSession={handleLockApp}
         counts={{

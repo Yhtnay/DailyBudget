@@ -619,7 +619,7 @@ export function TransactionsTab({
       </section>
 
       {/* Quick-Add Transazione Completa + Lista */}
-      <div className="grid-2">
+      <div className="panel-pair desktop-split-view">
         <section className="card">
           <div className="card-header">
             <div>
@@ -1170,8 +1170,8 @@ export function TransactionsTab({
           </button>
         </div>
 
-        <div className="grid-2">
-          {/* Colonna 1: Import CSV con Deduplica */}
+        <div className="panel-pair desktop-split-view">
+          {/* Pannello Importazione Estratto Conto CSV */}
           <div
             style={{
               padding: '0.9rem',
@@ -1184,7 +1184,7 @@ export function TransactionsTab({
             }}
           >
             <strong style={{ fontSize: '0.86rem' }}>
-              Importa Estratto Conto CSV (Formato: Data;Descrizione;Importo;Valuta)
+              Importa Estratto Conto CSV (Campi: Data;Descrizione;Importo;Valuta)
             </strong>
             <textarea
               id="textarea-csv-import"
@@ -1232,7 +1232,7 @@ export function TransactionsTab({
             </div>
           </div>
 
-          {/* Colonna 2: Smart Hybrid Receipt Attachment Uploader */}
+          {/* Pannello Scontrini e Ricevute Ibridi */}
           <div
             style={{
               padding: '0.9rem',

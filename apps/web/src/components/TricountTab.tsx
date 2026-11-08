@@ -202,7 +202,7 @@ export function TricountTab({
         </div>
 
         {activeTricountGroup && (
-          <div className="grid-2">
+          <div className="panel-pair desktop-split-view">
             {/* Saldi Netti + Piano di Rimborso Ottimizzato */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div

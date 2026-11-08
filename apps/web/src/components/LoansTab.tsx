@@ -35,7 +35,7 @@ export function LoansTab({
   >({});
 
   return (
-    <div className="grid-2">
+    <div className="panel-pair desktop-split-view">
       <section className="card">
         <div className="card-header">
           <div>

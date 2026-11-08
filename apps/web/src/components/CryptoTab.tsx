@@ -59,7 +59,7 @@ export function CryptoTab({
   return (
     <>
       {/* Crypto KPIs */}
-      <div className="grid-4">
+      <div className="metric-tile-group">
         <div className="card">
           <div className="metric-label">Valore Attuale Portfolio</div>
           <div className="metric-value mono-num" style={{ fontSize: '1.45rem' }}>
@@ -110,7 +110,7 @@ export function CryptoTab({
         </div>
       </div>
 
-      <div className="grid-dashboard">
+      <div className="panel-pair desktop-split-view">
         {/* Tabella Holdings & WAC */}
         <section className="card">
           <div className="card-header">

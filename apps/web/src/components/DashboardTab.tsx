@@ -64,7 +64,7 @@ export function DashboardTab({
 
   return (
     <>
-      <div className="grid-dashboard">
+      <div className="desktop-multi-pane">
         {/* Hero DailyBudget Card */}
         <section className="card daily-hero">
           <div className="daily-hero-top">
@@ -315,7 +315,7 @@ export function DashboardTab({
           </div>
         </section>
 
-        {/* Right Column: Native Widget & Watch Snapshot + Patrimonio */}
+        {/* Pannello Native Widget Snapshot & Patrimonio */}
         <section className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div className="card-header" style={{ marginBottom: 0 }}>
             <div>
@@ -346,7 +346,7 @@ export function DashboardTab({
               <span className="chip override-include">SYNCED</span>
             </div>
 
-            <div className="grid-2" style={{ gap: '0.65rem' }}>
+            <div className="panel-pair" style={{ gap: '0.65rem' }}>
               <div>
                 <div className="metric-label">daily_budget_remaining</div>
                 <div className="metric-value mono-num">
@@ -386,7 +386,7 @@ export function DashboardTab({
             </div>
           </div>
 
-          <div className="grid-2" style={{ gap: '0.75rem', marginTop: 'auto' }}>
+          <div className="panel-pair" style={{ gap: '0.75rem', marginTop: 'auto' }}>
             <div
               style={{
                 padding: '0.75rem',
@@ -419,7 +419,7 @@ export function DashboardTab({
       </div>
 
       {/* Category Breakdown & Latest Transactions */}
-      <div className="grid-2">
+      <div className="panel-pair desktop-split-view">
         <section className="card">
           <div className="card-header">
             <div>
