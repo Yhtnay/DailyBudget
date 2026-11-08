@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Gradient (Dark Slate/Teal to Vibrant Emerald) -->
+    <linearGradient id="bg-grad-v3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#042020" />
+      <stop offset="45%" stop-color="#0d5952" />
+      <stop offset="100%" stop-color="#0f766e" />
+    </linearGradient>
+
+    <!-- Ambient Radial Glow -->
+    <radialGradient id="glow-v3" cx="35%" cy="25%" r="65%">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#0f766e" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Golden Coin Gradient -->
+    <linearGradient id="gold-grad-v3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef9c3" />
+      <stop offset="30%" stop-color="#facc15" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+
+    <!-- Crisp White Vault Tone -->
+    <linearGradient id="vault-white-v3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f0fdfa" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle Base with smooth iOS/Android curvature -->
+  <rect x="24" y="24" width="464" height="464" rx="116" ry="116" fill="url(#bg-grad-v3)" />
+  <rect x="24" y="24" width="464" height="464" rx="116" ry="116" fill="url(#glow-v3)" />
+  <rect x="26" y="26" width="460" height="460" rx="114" ry="114" fill="none" stroke="#2dd4bf" stroke-width="2.5" stroke-opacity="0.4" />
+
+  <!-- Centered Emblem Group with comfortable margins -->
+  <g transform="translate(16, 8)">
+    <!-- Drop Shadow behind core emblem -->
+    <path d="M 148 132 C 148 120 158 110 170 110 L 260 110 C 322 110 366 146 366 200 C 366 234 346 260 316 272 C 354 286 378 318 378 358 C 378 412 334 418 274 418 L 170 418 C 158 418 148 408 148 396 Z" fill="#011514" opacity="0.32" transform="translate(0, 10)" />
+
+    <!-- Main Spine (Vertical Ledger Axis) -->
+    <rect x="148" y="118" width="56" height="280" rx="18" fill="url(#vault-white-v3)" />
+
+    <!-- D Arc (Upper Loop - Fixed Pool & Budget Limit) -->
+    <path d="M 194 118
+             L 264 118
+             C 320 118 358 148 358 198
+             C 358 248 320 270 264 270
+             L 194 270
+             Z"
+          fill="none"
+          stroke="url(#vault-white-v3)"
+          stroke-width="38"
+          stroke-linejoin="round" />
+
+    <!-- B Lower Arc (Lower Loop - Variable Daily Allowance) -->
+    <path d="M 194 242
+             L 272 242
+             C 334 242 370 274 370 328
+             C 370 382 334 398 272 398
+             L 194 398
+             Z"
+          fill="none"
+          stroke="url(#vault-white-v3)"
+          stroke-width="38"
+          stroke-linejoin="round" />
+
+    <!-- Monogram Center Bridge -->
+    <rect x="148" y="240" width="70" height="34" rx="8" fill="url(#vault-white-v3)" />
+
+    <!-- Daily Spark Coin (Golden Center Notch) -->
+    <g transform="translate(338, 256)">
+      <!-- Ambient Halo -->
+      <circle cx="0" cy="0" r="64" fill="#facc15" opacity="0.18" />
+      <circle cx="0" cy="0" r="50" fill="#facc15" opacity="0.28" />
+
+      <!-- Outer Coin -->
+      <circle cx="0" cy="0" r="42" fill="url(#gold-grad-v3)" />
+      <circle cx="0" cy="0" r="42" fill="none" stroke="#fef9c3" stroke-width="3" />
+      <circle cx="0" cy="0" r="33" fill="#eab308" />
+
+      <!-- Precision 4-Pointed Star -->
+      <path d="M 0 -20
+               C 0 -6 6 0 20 0
+               C 6 0 0 6 0 20
+               C 0 6 -6 0 -20 0
+               C -6 0 0 -6 0 -20 Z"
+            fill="#ffffff" />
+      
+      <circle cx="0" cy="0" r="3.5" fill="#b45309" />
+    </g>
+  </g>
+</svg>

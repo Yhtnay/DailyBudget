@@ -264,7 +264,7 @@ La WebApp di DailyBudget (`apps/web`) adotta un'architettura di presentazione re
 
 ### 8.1 Motore di Selezione View Mode (`Auto`, `Mobile`, `Desktop`)
 
-L'applicazione consente sia il rilevamento automatico del dispositivo sia la forzatura esplicita da parte dell'utente tramite il selettore pill integrato nella barra di stato (`PersistenceHeader`), con persistenza in `localStorage` (`dailybudget_view_mode`):
+L'applicazione consente sia il rilevamento automatico del dispositivo sia la forzatura esplicita da parte dell'utente tramite il selettore integrato nella sezione "Visualizzazione & Tema" del Menu unificato in alto a destra (`PersistenceHeader`), con persistenza in `localStorage` (`dailybudget_view_mode`):
 
 - **Auto (📱🖥️)**: Rileva dinamicamente la larghezza del viewport (`window.innerWidth` con breakpoint a `860px`). Se la finestra è inferiore a `860px`, attiva la modalità Mobile; altrimenti abilita l'esperienza Desktop completa.
 - **Mobile (📱 - `data-view-mode="mobile"`)**: Forza le proporzioni verticali smartphone (`max-width: 480px`), centrando il viewport anche su monitor widescreen per offrire un'interfaccia compatta e maneggevole. Sostituisce la barra superiore con la **Bottom Navigation Bar** fissa a sole icone e aggiunge la barra dedicata `mobile-reference-bar` per la data di simulazione.
@@ -336,5 +336,111 @@ flowchart LR
 - **`.panel-pair`**: Suddivisione paritetica a due pannelli (`repeat(2, minmax(0, 1fr))`) per sezioni di uguale rilevanza visiva (es. Pannello Importazione Estratto Conto CSV vs Pannello Scontrini e Ricevute Ibridi).
 - **`.metric-tile-group`**: Raggruppamento semantico per tessere metriche e indicatori KPI (`repeat(4, minmax(0, 1fr))` su schermi ampi, responsive su mobile a 2 o 1 pannello).
 - **Collasso Reattivo Unificato**: In modalità Mobile (`data-view-mode="mobile"` o viewport `< 860px`), tutti i pannelli multi-pane, split-view e panel-pair collassano a colonna singola a scorrimento verticale (`1fr`), garantendo un'ergonomia lineare priva di scroll orizzontali indesiderati.
+
+---
+
+### 8.4 Architettura Header: Brand Cluster & Menu Unificato Top-Right
+
+La testata superiore (`PersistenceHeader.tsx`) unifica le azioni di controllo del database e le preferenze globali in un layout simmetrico ed ergonomico, eliminando la dispersione dei pulsanti operativi lungo la testata:
+
+1. **Brand Cluster (in alto a sinistra)**:
+   - **Logo Applicativo Vettoriale**: componente [`DailyBudgetAppIcon`](file:///home/antigravity/Yhtnay/DailyBudget/apps/web/src/components/DailyBudgetAppIcon.tsx) (`34px` su Desktop, `28px` su Mobile) che rimpiazza il vecchio riquadro statico "DB".
+   - **Tipografia di Brand**: Titolo *DailyBudget* con badge pillola di release (`v0.2.0`) e sottotitolo tecnico dell'architettura (*SQLite-Wasm • OPFS • File System Access API*).
+   - **Indicatore di Stato del File (`.file-pill`)**: Badge in tempo reale che mostra il nome del file SQLite `.dbbudget`, dimensione in KB, backend di persistenza attivo (`DISK-SYNC`, `opfs` o `memory`) e il dot verde di sincronizzazione su filesystem.
+2. **Menu Unificato Dropdown (in alto a destra, alla stessa altezza del Brand)**:
+   - Pulsante trigger con icona `<Menu />`, etichetta su desktop e freccia animata `<ChevronDown />`.
+   - Pannello a comparsa (`.header-dropdown-menu`, `role="menu"`) con chiusura automatica su selezione, tasto Escape e click esterno.
+
+```mermaid
+flowchart TD
+    subgraph HeaderBar["PersistenceHeader (Barra Superiore Unificata)"]
+        direction LR
+        subgraph BrandCluster["Brand Cluster (Sinistra)"]
+            ICON["DailyBudgetAppIcon (SVG)"]
+            TITLE["Titolo 'DailyBudget' + v0.2.0"]
+            FILE_PILL["Pill File .dbbudget (Nome, KB, Backend)"]
+            ICON --- TITLE --- FILE_PILL
+        end
+
+        subgraph MenuTrigger["Trigger Menu (Destra, Stessa Altezza)"]
+            BTN["Pulsante #btn-header-menu-trigger"]
+        end
+
+        BrandCluster --- MenuTrigger
+    end
+
+    BTN -- "Click / Toggle (isMenuOpen)" --> DROPDOWN
+
+    subgraph DROPDOWN["Menu Dropdown Unificato (.header-dropdown-menu)"]
+        direction TB
+        WS["Riepilogo Workspace Attivo (Nome + Backend + Dot)"]
+
+        subgraph S1["Sezione 1: Archiviazione & File .dbbudget"]
+            M_SAVE["Salva su Disco (File System Access API)"]
+            M_OPEN["Apri file .dbbudget (SQLite binario)"]
+            M_EXP["Esporta .dbbudget (Download binario)"]
+            M_MRG["Merge LWW (Row-Level Last-Write-Wins)"]
+            M_NEW["Nuovo Workspace (Database vuoto)"]
+            M_RST["Ripristina Demo (Dati di esempio)"]
+        end
+
+        subgraph S2["Sezione 2: Dati Esterni"]
+            M_SYNC["Sync Tassi BCE Frankfurter & Prezzi Crypto CoinGecko"]
+        end
+
+        subgraph S3["Sezione 3: Visualizzazione & Tema"]
+            M_THM["Tema Chiaro / Scuro"]
+            M_VM["Selettore ViewMode (Auto / Mobile / Desktop)"]
+        end
+
+        subgraph S4["Sezione 4: Sicurezza (Se PIN attivo)"]
+            M_LCK["Blocca Sessione (Richiede PIN)"]
+        end
+
+        WS --> S1 --> S2 --> S3 --> S4
+    end
+```
+
+---
+
+### 8.5 Brand Identity, Iconografia SVG & Pipeline Asset PWA
+
+DailyBudget implementa un'identità grafica coordinata, progettata per garantire leggibilità a qualsiasi scala (dalla favicon a 16px fino all'icona PWA a 512px e allo splash screen di sistema):
+
+```mermaid
+flowchart LR
+    subgraph IdentityMaster["Master Graphic Design"]
+        SVG["DailyBudgetAppIcon.tsx<br/>SVG Vettoriale 512x512<br/>Gradiente Ottanio (#042020 -> #0f766e)<br/>Forziere Vault 'D/B' & Moneta Aurea"]
+    end
+
+    subgraph Targets["Target di Distribuzione Asset"]
+        direction TB
+        INAPP["In-App Header<br/>DailyBudgetAppIcon Component<br/>(28px mobile, 34px desktop)"]
+        FAV["Browser Desktop<br/>favicon.svg (Vettoriale)<br/>favicon.ico (Multi-risoluzione)"]
+        IOS["iOS Safari / iPadOS<br/>apple-touch-icon.png (180x180)<br/>Aggiungi a Schermata Home"]
+        PWA["Android & PWA Manifest<br/>pwa-192x192.png & pwa-512x512.png<br/>purpose: any maskable<br/>site.webmanifest (theme: #0f766e)"]
+    end
+
+    SVG --> INAPP
+    SVG --> FAV
+    SVG --> IOS
+    SVG --> PWA
+```
+
+- **Icona Vettoriale (`DailyBudgetAppIcon.tsx`)**:
+  - Risoluzione geometrica nativa a `512x512` con `viewBox="0 0 512 512"`.
+  - Base a super-ellisse smussata (`rx="116"`, `ry="116"`) con gradiente lineare ottanio-smeraldo (`#042020` -> `#0d5952` -> `#0f766e`) e bagliore radiale d'accento teal (`#2dd4bf`).
+  - Monogramma a forziere (*Vault "D/B"*) rifinito con doppia campitura e ombra di profondità, affiancato da una moneta dorata con finitura a stella a 4 punte.
+  - Supporto per rendering accessibile con attributi `role="img"` e `aria-label`.
+- **Bundle Asset Pubblici (`apps/web/public/`)**:
+  - `favicon.svg`: rendering SVG nitido e privo di sfocature nei browser moderni (Chrome, Safari, Firefox, Edge).
+  - `favicon.ico`: icona multi-livello per compatibilità universale.
+  - `apple-touch-icon.png`: formato quadrato 180x180 px per la generazione dell'icona nativa su iOS Safari quando l'utente seleziona *"Aggiungi a schermata Home"*.
+  - `pwa-192x192.png` e `pwa-512x512.png`: icone PWA ad alta densità con metadato `"purpose": "any maskable"`, compatibili con i ritagli circolari, a goccia o quadrati dei launcher Android.
+  - `site.webmanifest`: file di manifesto conforme alle specifiche W3C Web App Manifest con nome completo, `display: "standalone"`, `orientation: "portrait-primary"`, `theme_color: "#0f766e"` e `background_color: "#042020"`.
+- **Meta-Tag HTML (`apps/web/index.html`)**:
+  - Tag `<meta name="theme-color" content="#0f766e" />` per colorare la barra di stato dei browser mobile.
+  - Tag `<meta name="apple-mobile-web-app-capable" content="yes" />` e `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />` per un'esperienza a schermo intero priva di barre URL su iOS.
+
 
 

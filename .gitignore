@@ -18,3 +18,4 @@ pnpm-debug.log*
 .env.*
 .DS_Store
 Thumbs.db
+.agents/

@@ -1,14 +1,16 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { StoragePersistenceState } from '@dailybudget/db';
 import {
   Activity,
   Bitcoin,
+  ChevronDown,
   Database,
   Download,
   FolderOpen,
   GitMerge,
   HandCoins,
   Lock,
+  Menu,
   Monitor,
   Moon,
   RefreshCw,
@@ -21,6 +23,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+import { DailyBudgetAppIcon } from './DailyBudgetAppIcon';
 
 export type ActiveTab =
   | 'dashboard'
@@ -83,12 +86,40 @@ export function PersistenceHeader({
   onChangeReferenceDate,
 }: PersistenceHeaderProps) {
   const isMobile = effectiveMode === 'mobile';
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setIsMenuOpen(false);
+    }
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    }
+    if (isMenuOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
+  const executeAndClose = (fn: () => void) => {
+    fn();
+    setIsMenuOpen(false);
+  };
 
   return (
     <>
       <header className={`persistence-bar ${isMobile ? 'mobile-compact' : ''}`}>
         <div className="brand-cluster">
-          <div className="brand-mark">DB</div>
+          <div className="brand-mark-wrapper" title="DailyBudget">
+            <DailyBudgetAppIcon size={isMobile ? 28 : 34} />
+          </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
               <h1 className="brand-title">DailyBudget</h1>
@@ -127,159 +158,236 @@ export function PersistenceHeader({
           </div>
         </div>
 
-        <div className="toolbar-actions">
-          {/* View Mode Switcher Pill */}
-          <div className="view-mode-pill" role="group" aria-label="Modalità di visualizzazione">
-            <button
-              type="button"
-              className={`view-mode-btn ${viewMode === 'auto' ? 'active' : ''}`}
-              onClick={() => onSetViewMode('auto')}
-              title="Modalità Auto (Adatta in base allo schermo)"
-              aria-label="Modalità Auto"
-            >
-              <Sparkles size={13} />
-              {!isMobile && <span>Auto</span>}
-            </button>
-            <button
-              type="button"
-              className={`view-mode-btn ${viewMode === 'mobile' ? 'active' : ''}`}
-              onClick={() => onSetViewMode('mobile')}
-              title="Stile Mobile (Menu sole icone, proporzioni smartphone, Bottom Nav)"
-              aria-label="Stile Mobile"
-            >
-              <Smartphone size={13} />
-              {!isMobile && <span>Mobile</span>}
-            </button>
-            <button
-              type="button"
-              className={`view-mode-btn ${viewMode === 'desktop' ? 'active' : ''}`}
-              onClick={() => onSetViewMode('desktop')}
-              title="Modalità Desktop (Multi-schermo a finestra espansa)"
-              aria-label="Modalità Desktop"
-            >
-              <Monitor size={13} />
-              {!isMobile && <span>Desktop</span>}
-            </button>
-          </div>
-
+        {/* Top-Right Unified Dropdown Menu */}
+        <div className="header-menu-container" ref={menuRef}>
           <button
-            id="btn-open-dbbudget"
+            id="btn-header-menu-trigger"
             type="button"
-            className="btn"
-            onClick={onOpenLocalFile}
-            title="Apri file binario .dbbudget dal disco"
-            aria-label="Apri .dbbudget"
+            className={`btn header-menu-trigger ${isMenuOpen ? 'active' : ''}`}
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+            aria-expanded={isMenuOpen}
+            aria-haspopup="true"
+            aria-label="Menu opzioni e gestione file"
+            title="Menu Opzioni, Persistenza, Dati e Visualizzazione"
           >
-            <FolderOpen size={15} />
-            {!isMobile && <span>Apri .dbbudget</span>}
+            <Menu size={17} />
+            {!isMobile && <span>Menu</span>}
+            <ChevronDown size={14} className={`menu-chevron ${isMenuOpen ? 'rotated' : ''}`} />
           </button>
 
-          <button
-            id="btn-save-disk-dbbudget"
-            type="button"
-            className="btn btn-primary"
-            onClick={onSaveToLocalDisk}
-            title={
-              persistence.hasBoundDiskHandle
-                ? 'Salva direttamente su Disco (File System Access API)'
-                : 'Collega e Salva .dbbudget su Disco'
-            }
-            aria-label="Salva su Disco"
-          >
-            <Save size={15} />
-            {!isMobile && (
-              <span>
-                {persistence.hasBoundDiskHandle
-                  ? 'Salva su Disco'
-                  : 'Collega / Salva .dbbudget'}
-              </span>
-            )}
-          </button>
+          {isMenuOpen && (
+            <div className="header-dropdown-menu" role="menu">
+              {/* Summary / Active Workspace */}
+              <div className="dropdown-file-summary">
+                <div className="dropdown-file-title">Workspace Attivo</div>
+                <div className="dropdown-file-details">
+                  <span className={`dot-indicator ${persistence.hasBoundDiskHandle ? 'disk-bound' : ''}`} />
+                  <span className="dropdown-file-name" title={persistence.fileName}>{persistence.fileName}</span>
+                  <span className="dropdown-file-badge">
+                    {persistence.hasBoundDiskHandle ? 'DISK-SYNC' : persistence.storageBackend}
+                  </span>
+                </div>
+              </div>
 
-          <button
-            id="btn-export-dbbudget"
-            type="button"
-            className="btn"
-            onClick={onDownloadDbBudget}
-            title="Scarica il file binario SQLite3 .dbbudget"
-            aria-label="Esporta .dbbudget"
-          >
-            <Download size={15} />
-            {!isMobile && <span>Esporta</span>}
-          </button>
+              {/* Section 1: File & Persistence */}
+              <div className="dropdown-section">
+                <div className="dropdown-section-label">Archiviazione &amp; File .dbbudget</div>
 
-          <button
-            id="btn-merge-dbbudget"
-            type="button"
-            className="btn"
-            onClick={onMergeDbBudget}
-            title="Sincronizza un altro file .dbbudget tramite Row-Level Last-Write-Wins (LWW)"
-            aria-label="Merge LWW .dbbudget"
-          >
-            <GitMerge size={15} />
-            {!isMobile && <span>Merge LWW</span>}
-          </button>
+                <button
+                  id="btn-save-disk-dbbudget"
+                  type="button"
+                  className="dropdown-item primary-action"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onSaveToLocalDisk)}
+                  title={
+                    persistence.hasBoundDiskHandle
+                      ? 'Salva direttamente su Disco (File System Access API)'
+                      : 'Collega e Salva .dbbudget su Disco'
+                  }
+                >
+                  <Save size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">
+                      {persistence.hasBoundDiskHandle ? 'Salva su Disco' : 'Collega / Salva su Disco'}
+                    </span>
+                    <span className="dropdown-item-desc">File System Access API</span>
+                  </div>
+                </button>
 
-          <button
-            id="btn-new-workspace"
-            type="button"
-            className="btn"
-            onClick={onNewCleanWorkspace}
-            title="Crea un nuovo file .dbbudget vuoto"
-            aria-label="Nuovo workspace"
-          >
-            <Database size={15} />
-            {!isMobile && <span>Nuovo</span>}
-          </button>
+                <button
+                  id="btn-open-dbbudget"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onOpenLocalFile)}
+                  title="Apri file binario .dbbudget dal disco"
+                >
+                  <FolderOpen size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Apri file .dbbudget</span>
+                    <span className="dropdown-item-desc">Carica database binario SQLite</span>
+                  </div>
+                </button>
 
-          <button
-            id="btn-reset-demo"
-            type="button"
-            className="btn"
-            onClick={onResetDemo}
-            title="Ripristina dati dimostrativi completi"
-            aria-label="Demo dati"
-          >
-            <RotateCcw size={15} />
-            {!isMobile && <span>Demo</span>}
-          </button>
+                <button
+                  id="btn-export-dbbudget"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onDownloadDbBudget)}
+                  title="Scarica il file binario SQLite3 .dbbudget"
+                >
+                  <Download size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Esporta .dbbudget</span>
+                    <span className="dropdown-item-desc">Scarica copia binaria</span>
+                  </div>
+                </button>
 
-          <button
-            id="btn-sync-markets"
-            type="button"
-            className="btn"
-            onClick={onSyncMarkets}
-            title="Sincronizza Tassi BCE Frankfurter e Quotazioni Crypto CoinGecko"
-            aria-label="Sync Tassi e Crypto"
-          >
-            <RefreshCw size={15} />
-            {!isMobile && <span>Sync Tassi</span>}
-          </button>
+                <button
+                  id="btn-merge-dbbudget"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onMergeDbBudget)}
+                  title="Sincronizza un altro file .dbbudget tramite Row-Level Last-Write-Wins (LWW)"
+                >
+                  <GitMerge size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Merge LWW</span>
+                    <span className="dropdown-item-desc">Sincronizzazione Row-Level</span>
+                  </div>
+                </button>
 
-          {isPinEnabled && onLockSession && (
-            <button
-              id="btn-lock-session"
-              type="button"
-              className="btn"
-              onClick={onLockSession}
-              title="Blocca sessione con PIN"
-              aria-label="Blocca sessione con PIN"
-            >
-              <Lock size={15} />
-              {!isMobile && <span>Blocca</span>}
-            </button>
+                <button
+                  id="btn-new-workspace"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onNewCleanWorkspace)}
+                  title="Crea un nuovo file .dbbudget vuoto"
+                >
+                  <Database size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Nuovo Workspace</span>
+                    <span className="dropdown-item-desc">Inizializza database vuoto</span>
+                  </div>
+                </button>
+
+                <button
+                  id="btn-reset-demo"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onResetDemo)}
+                  title="Ripristina dati dimostrativi completi"
+                >
+                  <RotateCcw size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Ripristina Demo</span>
+                    <span className="dropdown-item-desc">Ricarica dati di esempio</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Section 2: External Markets */}
+              <div className="dropdown-section">
+                <div className="dropdown-section-label">Dati Esterni</div>
+                <button
+                  id="btn-sync-markets"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={() => executeAndClose(onSyncMarkets)}
+                  title="Sincronizza Tassi BCE Frankfurter e Quotazioni Crypto CoinGecko"
+                >
+                  <RefreshCw size={16} />
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">Sync Tassi &amp; Crypto</span>
+                    <span className="dropdown-item-desc">BCE Frankfurter &amp; CoinGecko</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Section 3: Visual & Theme */}
+              <div className="dropdown-section">
+                <div className="dropdown-section-label">Visualizzazione &amp; Tema</div>
+
+                <button
+                  id="btn-toggle-theme"
+                  type="button"
+                  className="dropdown-item"
+                  role="menuitem"
+                  onClick={onToggleTheme}
+                  title="Cambia Tema Chiaro/Scuro"
+                >
+                  {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                  <div className="dropdown-item-content">
+                    <span className="dropdown-item-title">
+                      Tema {theme === 'dark' ? 'Chiaro' : 'Scuro'}
+                    </span>
+                    <span className="dropdown-item-desc">
+                      Attualmente: {theme === 'dark' ? 'Scuro' : 'Chiaro'}
+                    </span>
+                  </div>
+                </button>
+
+                <div className="dropdown-segmented-row">
+                  <span className="dropdown-segmented-label">Layout:</span>
+                  <div className="view-mode-pill" role="group" aria-label="Modalità di visualizzazione">
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${viewMode === 'auto' ? 'active' : ''}`}
+                      onClick={() => onSetViewMode('auto')}
+                      title="Modalità Auto (Adatta in base allo schermo)"
+                    >
+                      <Sparkles size={13} />
+                      <span>Auto</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${viewMode === 'mobile' ? 'active' : ''}`}
+                      onClick={() => onSetViewMode('mobile')}
+                      title="Stile Mobile (Menu sole icone, proporzioni smartphone, Bottom Nav)"
+                    >
+                      <Smartphone size={13} />
+                      <span>Mobile</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`view-mode-btn ${viewMode === 'desktop' ? 'active' : ''}`}
+                      onClick={() => onSetViewMode('desktop')}
+                      title="Modalità Desktop (Multi-schermo a finestra espansa)"
+                    >
+                      <Monitor size={13} />
+                      <span>Desktop</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4: Security (if PIN enabled) */}
+              {isPinEnabled && onLockSession && (
+                <div className="dropdown-section">
+                  <div className="dropdown-section-label">Sicurezza</div>
+                  <button
+                    id="btn-lock-session"
+                    type="button"
+                    className="dropdown-item danger-action"
+                    role="menuitem"
+                    onClick={() => executeAndClose(onLockSession)}
+                    title="Blocca sessione con PIN"
+                  >
+                    <Lock size={16} />
+                    <div className="dropdown-item-content">
+                      <span className="dropdown-item-title">Blocca Sessione</span>
+                      <span className="dropdown-item-desc">Richiede PIN per rientrare</span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           )}
-
-          <button
-            id="btn-toggle-theme"
-            type="button"
-            className="btn"
-            onClick={onToggleTheme}
-            aria-label="Cambia Tema Chiaro/Scuro"
-            title="Cambia Tema Chiaro/Scuro"
-          >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
         </div>
       </header>
 

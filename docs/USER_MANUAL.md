@@ -132,15 +132,31 @@ Traccia i crediti verso terzi e i debiti contratti:
 
 ---
 
-## 4. Persistenza, File `.dbbudget` e Backup
+## 4. Persistenza, File `.dbbudget`, Menu Header & Backup
 
 DailyBudget utilizza un'architettura di salvataggio a **3 livelli sincronizzati**:
 1. **OPFS (Origin Private File System)**: Memoria interna del browser per l'auto-salvataggio istantaneo ad ogni modifica (senza finestre di dialogo fastidiose).
 2. **IndexedDB Fallback**: Utilizzato in automatico qualora il browser non supporti OPFS (es. finestre in incognito o vecchie versioni).
 3. **File System Access API (Desktop Chrome / Edge / Brave)**: Puoi collegare direttamente un file `.dbbudget` salvato nella cartella Documenti del tuo computer: le modifiche verranno scritte direttamente sul file su disco.
 
+### 🔝 Menu Unificato Header (in alto a destra)
+Tutte le azioni di persistenza e configurazione dell'applicazione sono raggruppate nel **Menu in alto a destra** (pulsante `Menu` con icona hamburger e freccia chevron), posizionato alla stessa altezza del logo e titolo DailyBudget:
+- **Workspace Attivo**: Mostra il nome del file SQLite `.dbbudget` in uso e il tipo di salvataggio attivo (*DISK-SYNC*, *OPFS* o *Memory*).
+- **Archiviazione & File .dbbudget**:
+  - **Salva su Disco / Collega**: Attiva la scrittura diretta sul file `.dbbudget` locale tramite File System Access API.
+  - **Apri file .dbbudget**: Carica un database SQLite binario già esistente salvato sul dispositivo.
+  - **Esporta .dbbudget**: Scarica una copia binaria di backup del file corrente.
+  - **Merge LWW**: Sincronizza e fonde un altro file `.dbbudget` con risoluzione Last-Write-Wins riga per riga.
+  - **Nuovo Workspace**: Inizializza un database vuoto pulito per un nuovo utente o anno fiscale.
+  - **Ripristina Demo**: Ricarica il dataset dimostrativo completo con transazioni, gruppi e portafoglio crypto di esempio.
+- **Dati Esterni**:
+  - **Sync Tassi & Crypto**: Aggiorna i tassi di cambio ufficiali BCE da Frankfurter e le quotazioni crypto da CoinGecko (con fallback locale automatico se offline).
+- **Visualizzazione & Tema**:
+  - **Tema Chiaro / Scuro**: Cambia la palette grafica tra modalità dark e light.
+  - **Selettore View Mode (Auto / Mobile / Desktop)**: Alterna il layout tra adattivo automatico, ottimizzato per smartphone o espanso a pannelli affiancati per desktop.
+
 ### Backup Consigliato:
-Dal menu in alto clicca periodicamente su **"Esporta .dbbudget"**: verrà scaricato il file database completo contenente transazioni, conti, gruppi e allegati. Puoi conservarlo su chiavetta USB, hard disk o inviartelo via email.
+Apri il menu in alto a destra e clicca periodicamente su **"Esporta .dbbudget"**: verrà scaricato il file database completo contenente transazioni, conti, gruppi e allegati. Puoi conservarlo su chiavetta USB, hard disk o inviartelo via email.
 
 ---
 
@@ -148,23 +164,26 @@ Dal menu in alto clicca periodicamente su **"Esporta .dbbudget"**: verrà scaric
 
 Puoi utilizzare DailyBudget comodamente da qualsiasi browser per smartphone (iOS Safari, Android Chrome, Firefox):
 
-### Installazione come WebApp (Home Screen):
+### Installazione come WebApp (Home Screen con Icona Ufficiale):
 1. **iOS (iPhone/iPad)**:
    - Apri il link nel browser **Safari**.
    - Tocca l'icona di **Condivisione** (il quadrato con la freccia verso l'alto).
    - Scorri verso il basso e tocca **"Aggiungi a schermata Home"**.
-   - Conferma con **"Aggiungi"**.
+   - L'icona ufficiale dell'applicazione (forziere con finitura oro e smeraldo) comparirà nell'anteprima; tocca **"Aggiungi"** in alto a destra.
 2. **Android**:
    - Apri il link in **Chrome**.
    - Tocca il menu a tre puntini in alto a destra.
    - Tocca **"Aggiungi a schermata Home"** o **"Installa app"**.
+   - Conferma l'installazione: l'icona PWA ad alta definizione maskable verrà posizionata nel launcher.
 
-L'icona di DailyBudget apparirà sulla tua Home: aprendola, funzionerà a **schermo intero** come un'app nativa e potrà essere usata anche **senza connessione internet**.
+L'icona ufficiale di DailyBudget apparirà sulla tua Home: aprendola, funzionerà a **schermo intero** come un'app nativa e potrà essere usata anche **senza connessione internet**.
 
 ### Esperienza Mobile-First & Navigazione:
+- **Brand Cluster Compatto (in alto a sinistra)**: Icona ufficiale dell'app, titolo DailyBudget e pillola con nome del file e indicatore di salvataggio.
+- **Menu Unificato Top-Right (in alto a destra)**: Il pulsante menu a comparsa è posizionato sulla stessa riga del titolo per massimizzare lo spazio verticale.
 - **Bottom Navigation Bar (Fissa in Basso)**: Su smartphone, la barra di navigazione si ancora al fondo dello schermo (`58px` di altezza) con pulsanti touch a sole icone ergonomiche e indicatori badge dot per accedere con il pollice a Dashboard, Transazioni, Tricount, Prestiti, Crypto e Impostazioni.
 - **Barra Data di Riferimento Dedicata**: La data di simulazione per testare scenari futuri o passati è comodamente posizionata in una barra compatta subito sotto la barra di stato.
-- **Selettore View Mode (Auto / Mobile / Desktop)**: Nella barra di stato superiore trovi il selettore per scegliere la modalità di visualizzazione:
+- **Selettore View Mode (Auto / Mobile / Desktop)**: Nel menu in alto a destra trovi il selettore per scegliere la modalità di visualizzazione:
   - **Auto**: Riconosce automaticamente le dimensioni del dispositivo.
   - **Mobile**: Mantiene le proporzioni compatte dello smartphone (`480px`) con navigazione inferiore anche se apri l'app su un monitor desktop.
   - **Desktop**: Espande l'interfaccia a schermo intero widescreen (`1440px`) con navigazione a schede in alto e layout a pannelli affiancati (split-view).
@@ -184,7 +203,7 @@ Se desideri proteggere l'accesso all'applicazione (particolarmente utile su smar
 - **Tastierino Numerico Integrato**: All'avvio dell'applicazione comparirà la schermata di blocco con tastierino touch per mobile e supporto da tastiera fisica.
 - **Nessuna Traccia Remota**: Il PIN è memorizzato unicamente nel `localStorage` del browser del tuo dispositivo.
 - **Modifica o Rimozione**: Dal tab Impostazioni puoi cambiare il PIN o disattivarlo in qualsiasi momento inserendo il PIN attuale come conferma.
-- **Blocco Rapido**: Il pulsante **"Blocca"** nella barra in alto consente di bloccare immediatamente la sessione attiva.
+- **Blocco Rapido Sessione**: Quando il PIN è attivo, puoi bloccare istantaneamente la sessione aprendo il Menu in alto a destra e cliccando su **"Blocca Sessione"** (`#btn-lock-session`).
 
 ---
 

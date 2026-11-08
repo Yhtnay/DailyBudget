@@ -30,6 +30,7 @@ import { CryptoTab } from './components/CryptoTab';
 import { DashboardTab } from './components/DashboardTab';
 import { LoansTab } from './components/LoansTab';
 import { PersistenceHeader, type ActiveTab, type ViewMode } from './components/PersistenceHeader';
+import { DailyBudgetAppIcon } from './components/DailyBudgetAppIcon';
 import { TransactionsTab } from './components/TransactionsTab';
 import { TricountTab } from './components/TricountTab';
 import {
@@ -298,7 +299,7 @@ export default function App() {
   if (!isReady || !dashboard || !repoRef.current) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '0.75rem' }}>
-        <div className="brand-mark">DB</div>
+        <DailyBudgetAppIcon size={48} />
         <p style={{ fontWeight: 600 }}>Inizializzazione motore SQLite-Wasm &amp; OPFS (.dbbudget)...</p>
       </div>
     );

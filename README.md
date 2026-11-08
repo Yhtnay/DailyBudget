@@ -21,9 +21,28 @@ Nessun dato viene inviato a server cloud: tutti i calcoli e i database risiedono
 
 ---
 
-## 📱 Esperienza d'Uso: Sistema View Mode & Mobile-First
+## 🎨 Nuova Identità Visiva, Iconografia & PWA
 
-L'interfaccia si adatta dinamicamente alle dimensioni del dispositivo o alle preferenze dell'utente tramite il selettore View Mode integrato nella barra di stato in alto:
+DailyBudget v0.2 introduce un'identità visiva rinnovata con l'icona ufficiale dell'applicazione (SVG vettoriale con monogramma a forziere e moneta dorata su gradiente smeraldo-ottanio):
+- **Icona Applicativa In-App**: sostituisce il vecchio riquadro testuale "DB" con il logo vettoriale ad alta definizione (`DailyBudgetAppIcon`), coerente tra tema chiaro e scuro.
+- **Icona Scheda Browser & Favicon**: `favicon.svg` e `favicon.ico` ottimizzati per la barra delle schede del browser desktop.
+- **Supporto PWA & "Aggiungi a Schermata Home"**: bundle completo per smartphone con `apple-touch-icon.png` (180x180 per iOS Safari), icone Android `pwa-192x192.png` e `pwa-512x512.png` (`purpose: any maskable`), e `site.webmanifest` con colore a tema `#0f766e` e visualizzazione a schermo intero (`standalone`).
+
+---
+
+## 📱 Esperienza d'Uso: Header Unificato & Sistema View Mode
+
+### 🔝 Testata Superiore Unificata (Brand Cluster & Menu Top-Right)
+L'interfaccia adotta una testata pulita che riunisce tutte le azioni di gestione del database e le preferenze:
+- **Brand Cluster (in alto a sinistra)**: allinea l'icona ufficiale dell'app, il titolo *DailyBudget*, il badge di versione e la pillola interattiva con lo stato del file SQLite `.dbbudget` (nome file, dimensione e backend di storage attivo: *DISK-SYNC*, *OPFS* o *Memory*).
+- **Menu Unificato Dropdown (in alto a destra)**: alla stessa altezza del titolo, un unico pulsante menu a comparsa raggruppa in sezioni logiche tutte le funzionalità prima disperse nella barra:
+  1. **Archiviazione & File .dbbudget**: Salva su Disco (File System Access API), Apri file, Esporta copia binaria, Merge LWW row-level, Nuovo Workspace vuoto e Ripristina dati Demo.
+  2. **Dati Esterni**: Sincronizzazione tassi BCE Frankfurter e quotazioni Crypto CoinGecko con resilienza offline.
+  3. **Visualizzazione & Tema**: Cambio rapido Tema Chiaro/Scuro e selettore Layout (Auto / Mobile / Desktop).
+  4. **Sicurezza**: Blocco rapido della sessione (quando il PIN locale è attivo).
+
+### 📐 Motore View Mode & Navigazione Adattiva
+L'interfaccia si adatta dinamicamente alle dimensioni del dispositivo o alla preferenza scelta dall'utente:
 
 - **Auto (📱🖥️)**: Rileva automaticamente la risoluzione dello schermo (breakpoint a `860px`), passando fluidamente dalla visualizzazione mobile compatta a quella desktop estesa.
 - **Mobile (📱)**: Ottimizza l'interfaccia con proporzioni verticali smartphone (`max-width: 480px`), abilitando la **Bottom Navigation Bar** fissa in basso a sole icone touch (`48x44px`), indicatori visivi dot badge e barra orizzontale dedicata per la data di simulazione. I pannelli funzionali sono disposti in un unico flusso scorrevole.
@@ -37,7 +56,7 @@ L'interfaccia si adatta dinamicamente alle dimensioni del dispositivo o alle pre
 DailyBudget può essere eseguito da qualsiasi browser mobile (Safari su iOS o Chrome su Android) e salvato sulla schermata Home come una normale applicazione:
 1. Apri l'indirizzo della WebApp dal browser del telefono.
 2. Seleziona **"Aggiungi a schermata Home"** dal menu di condivisione del browser.
-3. L'icona verrà creata sulla Home e l'app funzionerà a schermo intero anche senza connessione internet (in modalità aereo o offline).
+3. L'icona ufficiale dell'app verrà creata sulla Home e l'app funzionerà a schermo intero anche senza connessione internet (in modalità aereo o offline).
 
 ### Deploy Automatico su GitHub Pages
 Il repository include un workflow GitHub Actions preconfigurato ([`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml)):
