@@ -32,6 +32,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { compressReceiptImageIfPossible } from '../utils/receipt-compression';
+import { InfoTip } from './InfoTip';
 
 interface TransactionsTabProps {
   repo: DailyBudgetRepository;
@@ -227,9 +228,7 @@ export function TransactionsTab({
 
     setTxDescription('');
     await onRefresh();
-    onNotify(
-      'Transazione salvata nel database SQLite (.dbbudget) e widget_snapshot aggiornato.'
-    );
+    onNotify('Transazione registrata con successo.');
   };
 
   const filteredTransactions = useMemo(() => {
@@ -256,11 +255,12 @@ export function TransactionsTab({
           <div>
             <h2 className="card-title">
               <Wallet size={17} />
-              Conti del Workspace &amp; Default Budget (Regola C)
+              Conti del Workspace
+              <InfoTip
+                title="Regola del Conto"
+                text="Ogni conto ha un'impostazione predefinita di inclusione o esclusione dal budget, sovrascrivibile su qualsiasi singola transazione."
+              />
             </h2>
-            <p className="card-subtitle">
-              Ogni conto ha un flag <code>include_in_budget</code> di default, sovrascrivibile da qualsiasi singola transazione
-            </p>
           </div>
         </div>
 
@@ -293,10 +293,10 @@ export function TransactionsTab({
                   marginTop: '0.25rem',
                 }}
               >
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                   Default Budget:{' '}
                   <strong>
-                    {acc.include_in_budget === 1 ? 'Incluso (1)' : 'Escluso (0)'}
+                    {acc.include_in_budget === 1 ? 'Nel Budget' : 'Fuori Budget'}
                   </strong>
                 </span>
                 <button
@@ -381,8 +381,8 @@ export function TransactionsTab({
               value={newAccIncludeBudget ? '1' : '0'}
               onChange={(e) => setNewAccIncludeBudget(e.target.value === '1')}
             >
-              <option value="1">Incluso (1)</option>
-              <option value="0">Escluso (0)</option>
+              <option value="1">Nel Budget</option>
+              <option value="0">Fuori Budget</option>
             </select>
           </div>
           <button type="submit" className="btn btn-primary">
@@ -397,11 +397,12 @@ export function TransactionsTab({
           <div>
             <h2 className="card-title">
               <RefreshCw size={17} />
-              Regole Ricorrenti &amp; Auto-Commit (<code>recurring_rules</code>)
+              Regole Ricorrenti &amp; Abbonamenti
+              <InfoTip
+                title="Spese Periodiche"
+                text={`Generazione automatica spese fisse scadute rispetto alla data odierna (${referenceDate}).`}
+              />
             </h2>
-            <p className="card-subtitle">
-              Generazione automatica spese fisse scadute rispetto alla Data Riferimento ({referenceDate}) con calcolo UTC deterministico
-            </p>
           </div>
 
           <button
@@ -625,11 +626,12 @@ export function TransactionsTab({
             <div>
               <h2 className="card-title">
                 <Plus size={17} />
-                Registra Transazione (Split, Tag &amp; Override Budget)
+                Registra Movimento
+                <InfoTip
+                  title="Nuovo Movimento"
+                  text="Registra spese, entrate o giroconti. Supporta la suddivisione tra più categorie e la distinzione tra cassa effettiva e quota budget."
+                />
               </h2>
-              <p className="card-subtitle">
-                Supporta separazione <code>base_amount</code> / <code>budget_base_amount</code> e gerarchia Transazione &gt; Conto
-              </p>
             </div>
           </div>
 
@@ -643,11 +645,11 @@ export function TransactionsTab({
                   value={txType}
                   onChange={(e) => setTxType(e.target.value as TransactionType)}
                 >
-                  <option value="expense">Spesa (expense)</option>
-                  <option value="income">Entrata (income)</option>
-                  <option value="transfer">Giroconto (transfer)</option>
-                  <option value="loan_movement">Rata/Prestito (loan_movement)</option>
-                  <option value="tricount_settlement">Rimborso Tricount (tricount_settlement)</option>
+                  <option value="expense">Spesa</option>
+                  <option value="income">Entrata</option>
+                  <option value="transfer">Giroconto</option>
+                  <option value="loan_movement">Prestito / Rata</option>
+                  <option value="tricount_settlement">Pareggio Gruppo</option>
                 </select>
               </div>
 
@@ -661,7 +663,7 @@ export function TransactionsTab({
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name} ({a.include_in_budget === 1 ? 'Budget: Sì' : 'Budget: No'})
+                      {a.name} ({a.include_in_budget === 1 ? 'Nel Budget' : 'Fuori Budget'})
                     </option>
                   ))}
                 </select>
@@ -760,7 +762,7 @@ export function TransactionsTab({
               <div className="form-grid">
                 <div className="field">
                   <label htmlFor="tx-override-budget">
-                    Priorità Budget (<code>include_in_budget</code>)
+                    Inclusione nel Budget
                   </label>
                   <select
                     id="tx-override-budget"
@@ -771,14 +773,14 @@ export function TransactionsTab({
                     }
                   >
                     <option value="null">
-                      NULL — Eredita dal Conto (
+                      Predefinita dal Conto (
                       {selectedAccount?.include_in_budget === 1
-                        ? 'Incluso'
-                        : 'Escluso'}
+                        ? 'Nel Budget'
+                        : 'Fuori Budget'}
                       )
                     </option>
-                    <option value="1">1 — Forza INCLUSIONE nel DailyBudget</option>
-                    <option value="0">0 — Forza ESCLUSIONE dal DailyBudget</option>
+                    <option value="1">Forza Nel Budget</option>
+                    <option value="0">Forza Fuori Budget</option>
                   </select>
                 </div>
 
@@ -827,15 +829,14 @@ export function TransactionsTab({
                     previewAffectsBudget ? 'override-include' : 'override-exclude'
                   }`}
                 >
-                  Esito doesTransactionAffectBudget:{' '}
-                  {previewAffectsBudget ? 'IMPATTA IL BUDGET' : 'ESCLUSA DAL BUDGET'}
+                  Esito: {previewAffectsBudget ? 'Nel Budget' : 'Fuori Budget'}
                 </span>
               </div>
 
               {txCustomCompetence && (
                 <div className="field">
                   <label htmlFor="tx-competence-amount">
-                    Importo di Competenza Budget (<code>budget_base_amount</code> in EUR)
+                    Importo di Competenza Budget (€)
                   </label>
                   <input
                     id="tx-competence-amount"
@@ -1030,10 +1031,11 @@ export function TransactionsTab({
             <div>
               <h2 className="card-title">
                 Registro Movimenti ({filteredTransactions.length})
+                <InfoTip
+                  title="Registro Movimenti"
+                  text="Elenco completo dei movimenti con filtri rapidi per conto o tag."
+                />
               </h2>
-              <p className="card-subtitle">
-                Filtra per conto o tag trasversale
-              </p>
             </div>
 
             <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -1074,14 +1076,16 @@ export function TransactionsTab({
               <div key={tx.id} className="tx-row">
                 <div className="tx-main">
                   <div className="tx-title">
-                    <span>{tx.description || tx.type}</span>
-                    <span className="chip">{tx.type}</span>
+                    <span>{tx.description || (tx.type === 'expense' ? 'Spesa' : tx.type === 'income' ? 'Entrata' : tx.type === 'transfer' ? 'Giroconto' : 'Movimento')}</span>
+                    <span className="chip">
+                      {tx.type === 'expense' ? 'Spesa' : tx.type === 'income' ? 'Entrata' : tx.type === 'transfer' ? 'Giroconto' : tx.type === 'loan_movement' ? 'Prestito' : 'Pareggio Gruppo'}
+                    </span>
                     {tx.is_fixed === 1 && <span className="chip">FISSA</span>}
                     {tx.include_in_budget === 1 && (
-                      <span className="chip override-include">Forza [1]</span>
+                      <span className="chip override-include">Forzato: Nel Budget</span>
                     )}
                     {tx.include_in_budget === 0 && (
-                      <span className="chip override-exclude">Esclusa [0]</span>
+                      <span className="chip override-exclude">Forzato: Fuori Budget</span>
                     )}
                   </div>
                   <div className="tx-meta">
@@ -1104,21 +1108,21 @@ export function TransactionsTab({
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <div style={{ textAlign: 'right' }}>
                     <div className="mono-num" style={{ fontWeight: 700 }}>
-                      Cashflow: {formatCents(tx.base_amount)}
+                      Cassa: {formatCents(tx.base_amount)}
                     </div>
                     <div
                       className="mono-num"
                       style={{
-                        fontSize: '0.74rem',
+                        fontSize: '0.85rem',
                         color: tx.effective_affects_budget
                           ? 'var(--accent-primary)'
                           : 'var(--text-muted)',
                       }}
                     >
-                      Competenza:{' '}
+                      Budget:{' '}
                       {tx.effective_affects_budget
                         ? formatCents(tx.budget_base_amount)
-                        : '0,00 € (Esclusa)'}
+                        : '0,00 € (Fuori Budget)'}
                     </div>
                   </div>
 
@@ -1146,11 +1150,12 @@ export function TransactionsTab({
           <div>
             <h2 className="card-title">
               <FileSpreadsheet size={17} />
-              Import / Export CSV Bancario &amp; Allegati Scontrini (<code>attachments</code>)
+              Archivio Movimenti &amp; Ricevute
+              <InfoTip
+                title="Archivio e Allegati"
+                text="Esporta o importa movimenti in formato CSV con deduplica automatica. Allega immagini e scontrini compressi."
+              />
             </h2>
-            <p className="card-subtitle">
-              Deduplica deterministica su import CSV e compressione WebP client-side (&le; 500 KB <code>inline_blob</code> SQLite vs <code>local_path</code>)
-            </p>
           </div>
 
           <button
@@ -1244,8 +1249,8 @@ export function TransactionsTab({
               gap: '0.65rem',
             }}
           >
-            <strong style={{ fontSize: '0.86rem' }}>
-              <Paperclip size={14} style={{ verticalAlign: 'middle' }} /> Allega Scontrino / Ricevuta Ibrida (<code>inline_blob</code> &le; 500 KB)
+            <strong style={{ fontSize: '0.92rem' }}>
+              <Paperclip size={14} style={{ verticalAlign: 'middle' }} /> Allega Scontrino o Ricevuta
             </strong>
 
             <div className="field">
@@ -1266,7 +1271,7 @@ export function TransactionsTab({
               >
                 {transactions.slice(0, 15).map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.date} — {t.description || t.type} ({formatCents(t.base_amount)})
+                    {t.date} — {t.description || (t.type === 'expense' ? 'Spesa' : t.type === 'income' ? 'Entrata' : t.type === 'transfer' ? 'Giroconto' : 'Movimento')} ({formatCents(t.base_amount)})
                   </option>
                 ))}
               </select>

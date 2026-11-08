@@ -12,6 +12,7 @@ import type {
   TricountGroupDetail,
 } from '@dailybudget/db';
 import { Plus, Users } from 'lucide-react';
+import { InfoTip } from './InfoTip';
 
 interface TricountTabProps {
   repo: DailyBudgetRepository;
@@ -86,7 +87,11 @@ export function TricountTab({
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <h2 className="card-title">
               <Users size={18} />
-              Gruppi Tricount &amp; Risolutore Minimum Cash Flow
+              Spese Condivise &amp; Gruppi
+              <InfoTip
+                title="Spese di Gruppo"
+                text="Gestisci spese condivise con amici, coinquilini o viaggi. Calcola i saldi e i rimborsi minimi necessari."
+              />
             </h2>
             <select
               aria-label="Seleziona Gruppo Tricount"
@@ -112,14 +117,14 @@ export function TricountTab({
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <label
                 htmlFor="select-tricount-competence-mode"
-                style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
+                style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}
               >
-                Modalità Quote a Debito:
+                Modalità Conteggio:
               </label>
               <select
                 id="select-tricount-competence-mode"
                 className="select"
-                style={{ width: 'auto', fontSize: '0.78rem' }}
+                style={{ width: 'auto', fontSize: '0.86rem' }}
                 value={String(dashboard.settings.include_tricount_owes_immediately)}
                 onChange={async (e) => {
                   const val = e.target.value;
@@ -129,16 +134,16 @@ export function TricountTab({
                   await onRefresh();
                   onNotify(
                     val === '1'
-                      ? 'Tricount impostato su Competenza Economica (include_tricount_owes_immediately = 1).'
-                      : 'Tricount impostato su Criterio di Cassa al Rimborso (include_tricount_owes_immediately = 0).'
+                      ? 'Tricount impostato su Competenza Immediata.'
+                      : 'Tricount impostato su Criterio di Cassa al Pareggio.'
                   );
                 }}
               >
                 <option value="1">
-                  1 — Competenza Economica (Impatto immediato alla data spesa)
+                  Competenza Immediata (impatto immediato alla data spesa)
                 </option>
                 <option value="0">
-                  0 — Criterio di Cassa (Impatto al Rimborso tricount_settlement)
+                  Criterio di Cassa (impatto al momento del pareggio)
                 </option>
               </select>
             </div>
@@ -273,12 +278,15 @@ export function TricountTab({
                   border: '1px solid var(--border-strong)',
                 }}
               >
-                <h3 style={{ fontSize: '0.88rem', fontWeight: 700, marginBottom: '0.25rem' }}>
-                  Piano di Rimborso Ottimizzato (<code>calculateTricountSettlements</code>)
-                </h3>
-                <p className="card-subtitle" style={{ marginBottom: '0.75rem' }}>
-                  Algoritmo Greedy Minimum Cash Flow per azzerare i debiti col minimo numero di bonifici
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.65rem' }}>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>
+                    Piano di Rimborso Ottimizzato
+                  </h3>
+                  <InfoTip
+                    title="Pareggio Ottimizzato"
+                    text="Calcola il piano di rimborsi per azzerare i debiti tra partecipanti con il minimo numero di pagamenti."
+                  />
+                </div>
 
                 {activeTricountGroup.settlements.length === 0 ? (
                   <div className="chip override-include">

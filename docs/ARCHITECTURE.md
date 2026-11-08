@@ -442,5 +442,140 @@ flowchart LR
   - Tag `<meta name="theme-color" content="#0f766e" />` per colorare la barra di stato dei browser mobile.
   - Tag `<meta name="apple-mobile-web-app-capable" content="yes" />` e `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />` per un'esperienza a schermo intero priva di barre URL su iOS.
 
+---
 
+### 8.6 Architettura del Componente InfoTip: Progressive Disclosure & De-cluttering Mobile
 
+Nelle interfacce finanziarie su smartphone (viewport 360–480px), la presenza di lunghi testi esplicativi fissi al di sotto di intestazioni, etichette o parametri di calcolo sottrae fino al 35–45% dello spazio verticale utile ("above the fold"), costringendo l'utente a continue operazioni di scorrimento prima di raggiungere i controlli di immissione dati o i riepiloghi contabili.
+
+Il componente [`InfoTip`](file:///home/antigravity/Yhtnay/DailyBudget/apps/web/src/components/InfoTip.tsx) adotta il pattern di **Progressive Disclosure**: le informazioni contestuali vengono occultate per impostazione predefinita dietro un trigger compatto inline (`15px`) e presentate unicamente su richiesta tramite un popover leggero e non invasivo:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Utente
+    participant Btn as "InfoTip Trigger Button (.infotip-btn)"
+    participant Popover as "Popover Modale (.infotip-popover)"
+    participant Doc as "Document Listeners (Escape / Touch / Mouse)"
+
+    User->>Btn: Tocco / Click su icona Info (toggle)
+    Btn->>Popover: isOpen = true, aria-expanded="true"
+    Popover-->>User: Visualizza titolo contestuale e spiegazione formattata
+    Doc->>Doc: Registra listener globali keydown (Escape) e click/touchstart outside
+
+    alt Chiusura esplicita tramite pulsante X
+        User->>Popover: Click su pulsante X (.infotip-close-btn)
+        Popover->>Btn: isOpen = false, aria-expanded="false"
+    else Chiusura per tocco esterno o tasto Escape
+        User->>Doc: Tocco all'esterno del popover o pressione tasto Escape
+        Doc->>Btn: handleClickOutside / handleKeyDown -> setIsOpen(false)
+    end
+    Popover-->>User: Popover smontato dal DOM, layout a schermo preservato
+```
+
+#### Dettagli Implementativi e Specifiche di Accessibilità:
+1. **Trigger Accessibile**: pulsante HTML nativo (`<button type="button" className="infotip-btn">`) con icona vettoriale Lucide `Info`, attributo dinamico `aria-expanded={isOpen}` e `aria-label` descrittivo (con fallback sul titolo informativo o testo generico *"Maggiori informazioni"*).
+2. **Contenitore Popover (`role="dialog"`)**: renderizzato condizionalmente quando `isOpen === true`, include `role="dialog"`, `aria-modal="false"`, intestazione con titolo `<h5>` e pulsante di chiusura esplicito `infotip-close-btn` con icona `X` e `aria-label="Chiudi spiegazione"`.
+3. **Gestione del Ciclo di Vita degli Eventi**:
+   - `handleKeyDown`: intercetta la pressione del tasto `Escape` per consentire una navigazione fluida da tastiera fisica o assistiva.
+   - `handleClickOutside`: intercetta eventi sia `mousedown` che `touchstart` verificando che `containerRef.current.contains(event.target)` sia falso, garantendo la chiusura istantanea al tocco su qualsiasi punto dello schermo su dispositivi mobili touch.
+   - **Cleanup**: rimozione rigorosa dei listener all'evento di chiusura o allo smontaggio del componente per evitare memory leak.
+   - **Event Propagation Guard**: invocazione di `e.preventDefault()` ed `e.stopPropagation()` per evitare l'invio accidentale di form o il cambio di focus sui componenti circostanti.
+4. **Isolamento Visivo e Stile CSS (`apps/web/src/index.css`)**:
+   - `.infotip-wrapper`: `display: inline-flex; align-items: center; position: relative`.
+   - `.infotip-popover`: posizionamento assoluto ancorato al trigger, `z-index: 100`, elevazione con `box-shadow: var(--shadow-lg)`, sfondo a contrasto elevato (`var(--surface-overlay)`), bordo `1px solid var(--border-color)` e tipografia a `0.85rem` per garantire massima leggibilità senza affaticamento visivo.
+
+---
+
+### 8.7 DashboardTab come Hub Mobile delle Funzioni Ricorrenti
+
+Nel paradigma Mobile-First di DailyBudget, [`DashboardTab`](file:///home/antigravity/Yhtnay/DailyBudget/apps/web/src/components/DashboardTab.tsx) evolve da semplice cruscotto analitico di sola lettura a **Hub Operativo Centrale** per tutte le operazioni quotidiane ad alta frequenza d'uso.
+
+L'utente non ha più bisogno di navigare tra schede separate o scrollare lunghe liste per compiere i compiti contabili ricorrenti:
+
+```mermaid
+flowchart TD
+    subgraph Hub["DashboardTab (Hub Mobile Quotidiano)"]
+        direction TB
+        HERO["Disponibilità Oggi & Gauge DailyBudget"]
+
+        subgraph QuickActions["Quick Actions Grid (.quick-actions-grid)"]
+            direction LR
+            QA_EXP["Spesa Rapida<br/>(handleQuickExpense)"]
+            QA_INC["Nuova Entrata<br/>(handleQuickIncome)"]
+            QA_TRF["Giroconto<br/>(handleQuickTransfer)"]
+            QA_GRP["Spesa Gruppo<br/>(onNavigateTab 'tricount')"]
+            QA_SWP["Sweep Risparmi<br/>(handleSavingsSweep)"]
+        end
+
+        subgraph HighFreqFeed["Feed & Contesto Immediato"]
+            direction LR
+            FEED_TODAY["Spese di Oggi<br/>(Elenco movimenti della data odierna)"]
+            FEED_ACC["I Miei Conti<br/>(Liquidità reale per ogni conto)"]
+            FEED_WGT["Anteprima Widget & Orologio<br/>(Snapshot iOS / Android)"]
+        end
+
+        HERO --> QuickActions
+        QuickActions --> HighFreqFeed
+    end
+
+    subgraph ModalDrawer["Quick Action Bottom Sheet / Modal (.quick-modal-backdrop)"]
+        FORM["Form Touch Ad Alta Ergonomia<br/>• Input Numerico Grande (inputMode='decimal')<br/>• Selezione Rapida Conto & Categoria<br/>• Campo Descrizione Opzionale"]
+    end
+
+    subgraph CoreEngine["Pipeline Atomica & Reattiva"]
+        REPO["DailyBudgetRepository (.dbbudget SQLite-Wasm)"]
+        NOTIFY["Ricalcolo Saldi, DailyBudget & Feedback Visivo"]
+    end
+
+    QA_EXP -- "Tap" --> ModalDrawer
+    QA_INC -- "Tap" --> ModalDrawer
+    QA_TRF -- "Tap" --> ModalDrawer
+    ModalDrawer -- "Conferma Touch (min-height: 48px)" --> REPO --> NOTIFY
+    QA_GRP -- "Shortcut di Tab" --> CoreEngine
+    QA_SWP -- "1-Click Sweep" --> REPO
+```
+
+#### Le 5 Funzioni Ricorrenti dell'Hub (`.quick-actions-grid`):
+1. **Spesa Rapida (`handleQuickExpense`)**: Apre un pannello modale con input numerico in risalto (`inputMode="decimal"` per attivare la tastiera numerica mobile con separatore decimale), menu a tendina per il conto di addebito, categoria di spesa e descrizione opzionale. Al salvataggio, crea atomicamente la transazione, ricalcola i saldi dei conti e aggiorna istantaneamente la disponibilità del DailyBudget senza costringere l'utente a recarsi nel tab Transazioni.
+2. **Nuova Entrata (`handleQuickIncome`)**: Registra in due tocchi stipendi, rimborsi o entrate straordinarie selezionando il conto di destinazione e la categoria di entrata.
+3. **Giroconto (`handleQuickTransfer`)**: Esegue trasferimenti immediati di liquidità tra due conti personali (es. da Conto Corrente ordinario a Conto Deposito o Carta Prepagata), a impatto zero sul budget.
+4. **Spesa Gruppo (`onNavigateTab('tricount')`)**: Scorciatoia a tocco singolo che indirizza l'utente direttamente al modulo di ripartizione spese condivise Tricount, pre-impostando il gruppo attivo.
+5. **Sweep Risparmi (`handleSavingsSweep`, `.btn-sweep-savings`)**: Pulsante intelligente abilitato al termine del ciclo di budget per accantonare in un solo clic l'eventuale eccedenza variabile rimasta verso il conto risparmio configurato.
+
+#### Sezioni di Monitoraggio Integrato:
+- **Spese di Oggi**: Lista dinamica filtrata sulle transazioni con `date === referenceDate` e `type === 'expense'`, fornendo un riscontro visivo immediato sulle uscite sostenute nella giornata con descrizione, categoria, conto e importo evidenziato.
+- **I Miei Conti**: Riquadro sintetico che elenca tutti i conti patrimoniali attivi con saldo formattato e valuta, consentendo di monitorare la liquidità complessiva senza cambiare schermata.
+- **Anteprima Widget & Orologio**: Widget snapshot serializzato per WidgetKit / Jetpack Glance mantenuto a portata di mano per verificare la sincronizzazione delle complicazioni per smartwatch.
+- **Specifiche Touch Ergonomiche**: Tutti i pulsanti di azione rapida e i campi del form modale rispettano un'altezza minima di `min-height: 44px` (fino a `48px` per i pulsanti di conferma primari), prevenendo errori di digitazione accidentali su schermi smartphone.
+
+---
+
+### 8.8 Bonifica del Gergo Tecnico & Adozione del Linguaggio Naturale
+
+Per garantire un'esperienza accessibile a qualsiasi tipologia di utente (non solo sviluppatori o esperti di database), l'interfaccia adotta una rigorosa **separazione tra il modello computazionale a basso livello e la superficie di presentazione**:
+
+- Lo schema SQL, le chiavi di tabella, i vincoli relazionali e i nomi delle costanti TypeScript (`transaction_splits`, `is_fixed`, `include_in_budget`, `tricount_settlement`, `WAC`) rimangono circoscritti a `@dailybudget/db` e `@dailybudget/core`.
+- Nell'interfaccia utente finale ogni dicitura interna, stringa SQL grezza o codice di debug tra parentesi è stato sistematicamente eliminato e sostituito con espressioni in **linguaggio naturale limpido e intuitivo**.
+
+| Gergo Tecnico / Codice Rimosso | Nuova Formulazione in Linguaggio Naturale | Sezione / Componente Coinvolto |
+| :--- | :--- | :--- |
+| `SELECT * FROM widget_snapshot` | **Anteprima Widget & Orologio** | DashboardTab (`widget-preview`) |
+| `O(1) Native Read` | **Lettura Istantanea Nativa** | DashboardTab & PersistenceHeader |
+| `(expense)` | **Spesa** | Lista Transazioni, Storico, Dropdown |
+| `(income)` | **Entrata** | Lista Transazioni, Storico, Dropdown |
+| `(transfer)` | **Giroconto** | Lista Transazioni, Storico, Dropdown |
+| `(loan_movement)` | **Rimborso Debito / Movimento Prestito** | Modulo Prestiti & Transazioni |
+| `(tricount_settlement)` | **Pareggio Gruppo** | Modulo Spese Condivise / Tricount |
+| `Incluso (1)` / `include_in_budget = 1` | **Forzato: Nel Budget** (o **Competenza Immediata**) | Chip stato transazione & Selettore Tricount |
+| `Escluso (0)` / `include_in_budget = 0` | **Forzato: Fuori Budget** (o **Criterio di Cassa al Pareggio**) | Chip stato transazione & Selettore Tricount |
+| `count_installments_in_budget = 1` | **Includi rate nel calcolo del budget** | Configurazione Prestiti & Debiti |
+| `Cashflow: X €` | **Cassa: X €** | Dettaglio monetario transazione |
+| `Competenza: Y €` | **Budget: Y €** | Dettaglio monetario transazione |
+| `WAC Basis` / `calculateCryptoAssetMetrics` | **Valore di Carico** / **Prezzo Medio d'Acquisto** | Tabella Portafoglio Crypto |
+| `calculateTricountSettlements` | **Piano di Rimborso Ottimizzato** | Modulo Spese Condivise / Tricount |
+| `attachments (inline_blob <= 500 KB)` | **Archivio Movimenti & Ricevute** | Modulo Gestione Allegati |
+
+#### Standard di Accessibilità e Tipografia (`MobileUI.test.ts`):
+- **Soglia Minima dei Font**: Nessun elemento testuale regolare utilizza dimensioni inferiori a `0.85rem` (eliminando font miniaturizzati a `0.74rem` non conformi ai principi di leggibilità su dispositivi mobili).
+- **Target di Tocco Minimi**: Pulsanti, input e controlli interattivi rispettano la soglia minima di `44px` di altezza, estesa a `48px` per la barra di navigazione inferiore e i bottoni di conferma modali.

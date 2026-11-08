@@ -130,13 +130,13 @@ export function PersistenceHeader({
               )}
             </div>
             {!isMobile && (
-              <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
-                SQLite-Wasm • OPFS • File System Access API
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Database Locale • Sincronizzazione Offline
               </div>
             )}
           </div>
 
-          <div className="file-pill" title="Stato del file SQLite .dbbudget attivo">
+          <div className="file-pill" title="Stato del file di bilancio attivo">
             <span
               className={`dot-indicator ${
                 persistence.hasBoundDiskHandle ? 'disk-bound' : ''
@@ -220,12 +220,12 @@ export function PersistenceHeader({
                   className="dropdown-item"
                   role="menuitem"
                   onClick={() => executeAndClose(onOpenLocalFile)}
-                  title="Apri file binario .dbbudget dal disco"
+                  title="Apri file .dbbudget dal disco"
                 >
                   <FolderOpen size={16} />
                   <div className="dropdown-item-content">
                     <span className="dropdown-item-title">Apri file .dbbudget</span>
-                    <span className="dropdown-item-desc">Carica database binario SQLite</span>
+                    <span className="dropdown-item-desc">Carica bilancio dal dispositivo</span>
                   </div>
                 </button>
 
@@ -235,12 +235,12 @@ export function PersistenceHeader({
                   className="dropdown-item"
                   role="menuitem"
                   onClick={() => executeAndClose(onDownloadDbBudget)}
-                  title="Scarica il file binario SQLite3 .dbbudget"
+                  title="Scarica file di backup .dbbudget"
                 >
                   <Download size={16} />
                   <div className="dropdown-item-content">
                     <span className="dropdown-item-title">Esporta .dbbudget</span>
-                    <span className="dropdown-item-desc">Scarica copia binaria</span>
+                    <span className="dropdown-item-desc">Scarica copia di backup</span>
                   </div>
                 </button>
 
@@ -250,12 +250,12 @@ export function PersistenceHeader({
                   className="dropdown-item"
                   role="menuitem"
                   onClick={() => executeAndClose(onMergeDbBudget)}
-                  title="Sincronizza un altro file .dbbudget tramite Row-Level Last-Write-Wins (LWW)"
+                  title="Sincronizza un altro file .dbbudget"
                 >
                   <GitMerge size={16} />
                   <div className="dropdown-item-content">
-                    <span className="dropdown-item-title">Merge LWW</span>
-                    <span className="dropdown-item-desc">Sincronizzazione Row-Level</span>
+                    <span className="dropdown-item-title">Sincronizza File</span>
+                    <span className="dropdown-item-desc">Unisci modifiche recenti</span>
                   </div>
                 </button>
 
@@ -442,7 +442,7 @@ export function PersistenceHeader({
               onClick={() => onSelectTab('crypto')}
             >
               <Bitcoin size={16} />
-              Crypto WAC ({counts.cryptoAssets})
+              Crypto ({counts.cryptoAssets})
             </button>
 
             <button
@@ -563,7 +563,7 @@ export function PersistenceHeader({
             type="button"
             className={`bottom-nav-item ${activeTab === 'crypto' ? 'active' : ''}`}
             onClick={() => onSelectTab('crypto')}
-            title={`Crypto WAC (${counts.cryptoAssets})`}
+            title={`Crypto (${counts.cryptoAssets})`}
             aria-label="Crypto"
           >
             <div className="icon-with-badge">

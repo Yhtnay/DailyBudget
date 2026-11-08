@@ -48,6 +48,27 @@ L'interfaccia si adatta dinamicamente alle dimensioni del dispositivo o alla pre
 - **Mobile (📱)**: Ottimizza l'interfaccia con proporzioni verticali smartphone (`max-width: 480px`), abilitando la **Bottom Navigation Bar** fissa in basso a sole icone touch (`48x44px`), indicatori visivi dot badge e barra orizzontale dedicata per la data di simulazione. I pannelli funzionali sono disposti in un unico flusso scorrevole.
 - **Desktop (🖥️)**: Layout widescreen espanso (`max-width: 1440px`) con navigazione a schede orizzontali e **pannelli affiancati multi-schermo (split-view)** per gestire contemporaneamente inserimento dati e storici senza perdere il contesto visivo (Quick-Add vs Storico Transazioni, Setup Prestito vs Piano di Rimborso, Spese Tricount vs Saldi, Holdings vs Portafoglio WAC).
 
+### ⚡ DashboardTab come Hub Mobile & Quick Actions
+La schermata principale è progettata per operare come **Hub Quotidiano Mobile a portata di pollice**:
+- **5 Azioni Rapide Immediate (`.quick-actions-grid`)**:
+  - **Spesa Rapida**: form modale/bottom-sheet rapido con tastierino decimale touch, categoria e conto per registrare uscite al volo in pochi secondi.
+  - **Nuova Entrata**: accredito istantaneo di stipendi, rimborsi o entrate sul conto desiderato.
+  - **Giroconto**: trasferimento rapido di fondi tra due conti (es. dal conto corrente al conto risparmio) a impatto zero sul budget.
+  - **Spesa Gruppo**: shortcut con apertura immediata del modulo Spese Condivise / Tricount.
+  - **Sweep Risparmi**: pulsante automatico abilitato a fine ciclo per accantonare con 1 clic il budget variabile non speso.
+- **Spese di Oggi & I Miei Conti**: visualizzazione contestuale immediata delle uscite sostenute nella data odierna e dei saldi attuali di tutti i conti senza dover navigare altrove.
+
+### 💡 Componente InfoTip: Interfaccia Pulita (Progressive Disclosure)
+- **Zero Disordine a Schermo**: elimina le descrizioni testuali fisse e i lunghi paragrafi statici che occupavano spazio prezioso su display mobile.
+- **Popover Contestuale Accessibile**: icona touch discreta (`InfoTip`) che apre un dialog popover con titolo, spiegazione e pulsante di chiusura `X`.
+- **Interazione Mobile-Ready**: chiusura automatica al tocco sullo sfondo (`touchstart`/`mousedown`) o con tasto `Escape`, compatibile al 100% con lettori di schermo (`role="dialog"`, `aria-expanded`).
+
+### 🗣️ Linguaggio Naturale & Zero Gergo Database/SQL
+L'interfaccia parla la lingua dell'utente quotidiano, isolando rigorosamente le denominazioni tecniche del database:
+- **Nessuna query SQL o dicitura criptica**: rimossi riferimenti come `SELECT * FROM widget_snapshot` o codici DB come `(expense)`, `(income)`, `(transfer)`.
+- **Termini Finanziari Chiari**: etichette native come *"Spesa"*, *"Entrata"*, *"Giroconto"*, *"Rimborso Debito"*, *"Cassa vs Budget"* e *"Valore di Carico"* al posto di gerghi o codici booleani interni (`include_in_budget = 1` $\rightarrow$ *"Forzato: Nel Budget"*).
+- **Tipografia Ergonomica**: dimensione minima del testo fissata a `0.85rem` e touch target minimi di `44px` (48px per bottoni di conferma e bottom bar).
+
 ---
 
 ## 🚀 Utilizzo su Smartphone & Deploy Web

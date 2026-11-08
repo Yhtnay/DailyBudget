@@ -264,3 +264,32 @@ flowchart TD
     CHECK_DUE -- "No (Tutte le regole future)" --> SNAP --> DONE
 ```
 
+---
+
+## 8. Esperienza Utente Mobile-First, Hub delle Funzioni Ricorrenti & Linguaggio Naturale
+
+L'efficacia pratica di un'applicazione finanziaria quotidiana dipende dalla rapidità con cui l'utente può inserire dati e interpretare la propria situazione contabile in mobilità (spesso con una sola mano e tempi di attenzione limitati a pochi secondi):
+
+### A. Principio di Astrazione e Linguaggio Naturale (Zero Technical Jargon)
+I dettagli dello schema relazionale e le convenzioni interne (`schema_v2.sql`, flag booleani, clausole SQL o complessità algoritmiche) appartengono allo strato di calcolo e persistenza. La superficie di presentazione utente implementa una bonifica rigorosa:
+- **Separazione Semantica Cassa vs Budget**: la grandezza bancaria reale è etichettata chiaramente come **Cassa** (impatto sul conto), mentre la quota di competenza personale è indicata come **Budget** (impatto sulla disponibilità del DailyBudget).
+- **Trasparenza dei Tipi di Movimento**: eliminazione dei codici grezzi di database (`expense`, `income`, `transfer`, `loan_movement`, `tricount_settlement`) a favore di etichette naturali univoche: **Spesa**, **Entrata**, **Giroconto**, **Rimborso Debito**, **Pareggio Gruppo**.
+- **Forzature del Budget Intuitive**: i flag `include_in_budget` (0 o 1) sono presentati come **"Forzato: Nel Budget"** (es. rimborso spese o PAC) e **"Forzato: Fuori Budget"** (movimenti straordinari non imputabili alla disponibilità ordinaria).
+- **Trasparenza Patrimoniale e Crypto**: il costo medio ponderato è esplicitato come **Valore di Carico** e **Prezzo Medio d'Acquisto**, rendendo comprensibile l'andamento del portafoglio senza richiedere nozioni avanzate di contabilità WAC.
+
+### B. Dashboard come Hub Operativo Quotidiano (Mobile-First Hub)
+La schermata principale centralizza il 90% delle interazioni frequenti attraverso una griglia di azioni rapide touch a 1 tocco:
+1. **Spesa Rapida**: apertura immediata del pannello con tastierino decimale a caratteri grandi per registrare un esborso sul posto in meno di 5 secondi.
+2. **Nuova Entrata**: accredito al volo di entrate o rimborsi sul conto selezionato.
+3. **Giroconto**: trasferimento rapido di denaro tra due conti a impatto zero sul budget.
+4. **Spesa Gruppo**: navigazione guidata immediata verso il ripartitore spese Tricount.
+5. **Sweep Risparmi**: consolidamento in 1 clic dell'avanzo variabile a fine mese sul conto di risparmio.
+6. **Feed Contestuale di Oggi & Saldi Conti**: monitoraggio immediato delle sole spese della giornata odierna e dei saldi di cassa disponibili senza mai cambiare scheda.
+
+### C. Progressive Disclosure tramite InfoTip
+Su viewport ridotti (smartphone con larghezza 360–480px), mostrare descrizioni testuali fisse appesantisce la schermata e allontana i controlli interattivi. Il componente `InfoTip` applica il pattern di *Progressive Disclosure*:
+- L'interfaccia rimane pulita ed essenziale (*de-cluttering* visivo).
+- L'utente accede alla spiegazione approfondita solo quando lo desidera toccando l'icona informativa `(i)`.
+- Il popover è pienamente accessibile (`role="dialog"`, `aria-label`, chiusura via tasto Escape o tocco esterno), preservando leggibilità ed ergonomia touch conformi agli standard internazionali (`min-height: 44px` / `48px`).
+
+

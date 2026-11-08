@@ -6,6 +6,7 @@ import type {
   LoanRow,
 } from '@dailybudget/db';
 import { HandCoins, Plus } from 'lucide-react';
+import { InfoTip } from './InfoTip';
 
 interface LoansTabProps {
   repo: DailyBudgetRepository;
@@ -41,11 +42,12 @@ export function LoansTab({
           <div>
             <h2 className="card-title">
               <HandCoins size={17} />
-              Posizioni Attive (Crediti <code>lent</code> &amp; Debiti <code>borrowed</code>)
+              Posizioni Attive (Crediti &amp; Debiti)
+              <InfoTip
+                title="Crediti e Debiti"
+                text="Traccia capitale iniziale, residuo e rate periodiche. I prestiti e debiti rimangono neutri rispetto al budget giornaliero, a meno che tu non scelga di includere le rate."
+              />
             </h2>
-            <p className="card-subtitle">
-              Traccia capitale iniziale, residuo e impatto opzionale delle rate sul DailyBudget
-            </p>
           </div>
         </div>
 
@@ -72,7 +74,7 @@ export function LoansTab({
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ fontSize: '0.94rem' }}>{ln.name}</strong>
-                    <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                       Controparte: <strong>{ln.counterparty_name}</strong> • Stato:{' '}
                       {ln.status}
                     </div>
@@ -83,12 +85,12 @@ export function LoansTab({
                     }`}
                   >
                     {ln.type === 'lent'
-                      ? 'CREDITO (Soldi Prestati)'
-                      : 'DEBITO / FINANZIAMENTO'}
+                      ? 'Credito Concesso'
+                      : 'Debito / Finanziamento'}
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.86rem' }}>
                   <span>
                     Residuo:{' '}
                     <strong className="mono-num">
@@ -123,7 +125,9 @@ export function LoansTab({
                   }}
                 >
                   <span className="chip">
-                    count_installments_in_budget: {ln.count_installments_in_budget}
+                    {ln.count_installments_in_budget === 1
+                      ? 'Rate Nel Budget'
+                      : 'Rate Fuori Budget'}
                   </span>
 
                   {ln.remaining_amount > 0 && (
@@ -131,7 +135,7 @@ export function LoansTab({
                       <input
                         aria-label={`Importo rata per ${ln.name}`}
                         className="input mono-num"
-                        style={{ width: '100px', padding: '0.28rem 0.5rem' }}
+                        style={{ width: '110px', padding: '0.35rem 0.5rem', fontSize: '0.88rem' }}
                         placeholder="100.00"
                         value={installmentAmounts[ln.id] ?? '100.00'}
                         onChange={(e) =>
@@ -177,6 +181,10 @@ export function LoansTab({
         <div className="card-header">
           <h2 className="card-title">
             <Plus size={17} /> Nuovo Prestito o Finanziamento
+            <InfoTip
+              title="Nuovo Prestito"
+              text="Inserisci un credito (soldi prestati ad altri) o un debito/finanziamento con piano di rientro."
+            />
           </h2>
         </div>
 
@@ -216,7 +224,7 @@ export function LoansTab({
             <input
               id="loan-counterparty"
               className="input"
-              placeholder="es. Findomestic / Marco Rossi"
+              placeholder="es. Banca / Marco Rossi"
               value={newLoanCounterparty}
               onChange={(e) => setNewLoanCounterparty(e.target.value)}
             />
@@ -233,8 +241,8 @@ export function LoansTab({
                   setNewLoanType(e.target.value as 'lent' | 'borrowed')
                 }
               >
-                <option value="borrowed">Debito / Finanziamento (borrowed)</option>
-                <option value="lent">Credito / Soldi Prestati (lent)</option>
+                <option value="borrowed">Debito / Finanziamento</option>
+                <option value="lent">Credito / Soldi Prestati</option>
               </select>
             </div>
 
@@ -251,7 +259,7 @@ export function LoansTab({
 
           <label
             style={{
-              fontSize: '0.82rem',
+              fontSize: '0.88rem',
               display: 'flex',
               alignItems: 'center',
               gap: '0.45rem',
@@ -263,8 +271,7 @@ export function LoansTab({
               checked={newLoanCountBudget}
               onChange={(e) => setNewLoanCountBudget(e.target.checked)}
             />
-            Includi automaticamente le rate nel calcolo del DailyBudget (
-            <code>count_installments_in_budget = 1</code>)
+            Includi automaticamente le rate nel calcolo del DailyBudget
           </label>
 
           <button type="submit" className="btn btn-primary">

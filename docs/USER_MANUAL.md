@@ -58,15 +58,25 @@ $$\text{Disponibilità Oggi} = \text{Quota Giornaliera Dinamica} - \text{Variabi
 
 ## 3. Guida ai Moduli Applicativi
 
-### 3.1 Dashboard & DailyBudget
-La schermata principale ti mostra a colpo d'occhio:
+### 3.1 Dashboard & Hub Operativo Mobile
+La schermata principale è progettata come il tuo **Hub Quotidiano Mobile**, riunendo in un solo posto le informazioni essenziali e le azioni più frequenti a portata di pollice:
+
 - **Disponibilità Oggi**: Il numero cardine per le tue decisioni quotidiane. Indica quanto puoi spendere oggi senza compromettere gli obiettivi mensili.
-- **Indicatori di Stato**:
+- **Indicatori Visivi di Stato**:
   - 🟢 **Sicuro**: La spesa odierna è al di sotto della quota del giorno.
   - 🟡 **Attenzione**: Ti stai avvicinando al limite della quota giornaliera.
   - 🔴 **Sforamento**: Hai superato la quota odierna o il plafond mensile.
-- **Striscia Metriche**: Spiega passo dopo passo i fattori della formula (giorno del ciclo, spese fisse, variabile accumulato, giorni residui).
-- **Snapshot Widget & Smartwatch**: Mostra in tempo reale l'anteprima dei dati serializzati a tempo zero per i widget di iOS/Android e smartwatch.
+- **Hub Azioni Rapide (`Quick Actions`)**:
+  - **Spesa Rapida**: Apre un pannello touch immediato per registrare un'uscita in pochi secondi (con tastierino decimale, conto e categoria) senza dover aprire il modulo Transazioni.
+  - **Nuova Entrata**: Registra al volo stipendi, incassi o rimborsi sul conto selezionato.
+  - **Giroconto**: Esegue all'istante uno spostamento tra due tuoi conti (ad es. da Conto Corrente a Conto Deposito) a impatto zero sul budget.
+  - **Spesa Gruppo**: Scorciatoia diretta per passare al modulo Spese Condivise (Tricount).
+  - **Sweep Risparmi**: Pulsante che a fine mese consente di trasferire con un solo clic il budget variabile risparmiato verso il tuo conto di accumulo.
+- **Feed Immediato**:
+  - **Spese di Oggi**: Elenco trasparente delle sole uscite effettuate nella giornata corrente, con categoria, conto e importo evidenziato per verificare subito cosa ha ridotto la disponibilità odierna.
+  - **I Miei Conti**: Panoramica sintetica dei saldi aggiornati di tutti i tuoi conti.
+  - **Anteprima Widget & Orologio**: Mostra in tempo reale lo snapshot serializzato a tempo zero per i widget nativi di iOS/Android e gli smartwatch.
+- **Icone Informative (`InfoTip`)**: Le descrizioni a schermo fisso sono state sostituite da icone interattive `(i)`: toccandole si apre un riquadro popover esplicativo leggero, chiudibile con un tocco sullo sfondo o sul tasto `X`.
 
 ---
 
@@ -80,12 +90,13 @@ Nel modulo **Conti, Split & Transazioni**:
 ---
 
 ### 3.3 Registrazione Transazioni e Split
-Supporta 3 tipologie fondamentali di movimento:
-1. **Uscita (Expense)**: Scala il saldo dal conto selezionato.
-2. **Entrata (Income)**: Incrementa il saldo del conto selezionato.
-   - *Nota Rimborsi*: Puoi contrassegnare un'entrata con `include_in_budget = 1` se si tratta di un rimborso spese (es. rimborso spese mediche o aziendali), in modo che reintegri il tuo budget variabile.
-3. **Trasferimento (Transfer)**: Giroconto tra due tuoi conti (ad es. da Conto Corrente a Conto Deposito) a impatto zero sul budget.
+DailyBudget utilizza un linguaggio chiaro e naturale per ogni movimento finanziario:
+1. **Spesa**: Uscita di denaro che riduce il saldo del conto selezionato e viene conteggiata nella disponibilità del giorno (a meno che non sia forzata fuori budget).
+2. **Entrata**: Accredito che incrementa il saldo del conto selezionato.
+   - *Nota Rimborsi*: Se un'entrata rappresenta un rimborso spese (es. spese mediche o aziendali anticipate), puoi contrassegnarla con **"Forzato: Nel Budget"** in modo che reintegri direttamente il tuo budget variabile del mese.
+3. **Giroconto**: Spostamento di denaro tra due tuoi conti personali (ad es. da Conto Corrente a Conto Deposito) a impatto zero sul budget.
 4. **Split Multi-Categoria**: Puoi dividere un unico scontrino (es. 100 € al supermercato) in più voci (es. 70 € Alimentari, 20 € Casa, 10 € Svago). DailyBudget verifica al centesimo che la somma degli split coincida esattamente con l'importo totale.
+5. **Cassa vs Budget**: Per ogni movimento la schermata mostra chiaramente l'impatto di **Cassa** (il denaro effettivo movimentato sul conto) e l'impatto sul **Budget** (la quota di propria competenza che incide sul DailyBudget).
 
 ---
 
@@ -125,9 +136,9 @@ Traccia i crediti verso terzi e i debiti contratti:
 
 ### 3.8 Portfolio Crypto WAC & PAC Fiat
 - **Tracciamento Asset**: Supporta qualsiasi criptovaluta o token (BTC, ETH, SOL, AVAX, ecc.).
-- **Metodo Weighted Average Cost (WAC)**: Calcola in tempo reale il prezzo medio di carico ponderato delle posizioni aperte.
+- **Valore di Carico & Prezzo Medio d'Acquisto**: Calcola in tempo reale il valore di carico ponderato (WAC) delle posizioni aperte.
 - **P&L Realizzato e Non Realizzato**: Mostra i profitti o le perdite correnti rispetto ai prezzi di mercato.
-- **Collegamento Fiat**: Acquistando crypto con un conto bancario collegato, il saldo del conto corrente viene aggiornato automaticamente e puoi scegliere se conteggiare l'acquisto come PAC (`include_in_budget = 1`).
+- **Collegamento Fiat**: Acquistando crypto con un conto bancario collegato, il saldo del conto corrente viene aggiornato automaticamente e puoi scegliere se conteggiare l'acquisto come PAC (attivando l'opzione "Forzato: Nel Budget").
 - **Sincronizzazione Mercati**: Tassi di cambio fiat (BCE) e prezzi crypto (CoinGecko) con fallback resiliente offline in caso di assenza di rete.
 
 ---

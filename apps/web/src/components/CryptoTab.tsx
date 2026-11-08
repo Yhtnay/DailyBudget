@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
+import { InfoTip } from './InfoTip';
 
 interface CryptoTabProps {
   repo: DailyBudgetRepository;
@@ -68,14 +69,20 @@ export function CryptoTab({
         </div>
 
         <div className="card">
-          <div className="metric-label">Costo Storico di Carico (WAC Basis)</div>
+          <div className="metric-label" style={{ display: 'flex', alignItems: 'center' }}>
+            Costo Storico di Carico
+            <InfoTip
+              title="Costo Storico"
+              text="Calcolato sul Prezzo Medio Ponderato di Carico (WAC) per tutte le transazioni di acquisto."
+            />
+          </div>
           <div className="metric-value mono-num" style={{ fontSize: '1.45rem' }}>
             {formatCents(cryptoSummary.totalCostBasisCents)}
           </div>
         </div>
 
         <div className="card">
-          <div className="metric-label">P&amp;L Non Realizzato (Unrealized)</div>
+          <div className="metric-label">P&amp;L Latente</div>
           <div
             className="metric-value mono-num"
             style={{
@@ -93,7 +100,7 @@ export function CryptoTab({
         </div>
 
         <div className="card">
-          <div className="metric-label">P&amp;L Realizzato (Vendite Chiuse)</div>
+          <div className="metric-label">P&amp;L Realizzato</div>
           <div
             className="metric-value mono-num"
             style={{
@@ -111,17 +118,18 @@ export function CryptoTab({
       </div>
 
       <div className="panel-pair desktop-split-view">
-        {/* Tabella Holdings & WAC */}
+        {/* Tabella Holdings */}
         <section className="card">
           <div className="card-header">
             <div>
               <h2 className="card-title">
                 <Coins size={17} />
-                Asset in Portafoglio &amp; Calcolo WAC (<code>calculateCryptoAssetMetrics</code>)
+                Asset in Portafoglio
+                <InfoTip
+                  title="Portafoglio Crypto"
+                  text="Quantità con precisione fino a 8 decimali, Prezzo Medio Ponderato di Carico (PMC) e monitoraggio plusvalenze in tempo reale."
+                />
               </h2>
-              <p className="card-subtitle">
-                Quantità con precisione 8 decimali, Prezzo Medio di Carico (PMC) e aggiornamento prezzi offline/online
-              </p>
             </div>
 
             <button
@@ -140,11 +148,11 @@ export function CryptoTab({
                 <tr>
                   <th>Asset</th>
                   <th>Quantità</th>
-                  <th>PMC (WAC)</th>
+                  <th>Prezzo Medio (PMC)</th>
                   <th>Prezzo Mercato</th>
                   <th>Valore Attuale</th>
-                  <th>P&amp;L Unrealized</th>
-                  <th>P&amp;L Realized</th>
+                  <th>P&amp;L Latente</th>
+                  <th>P&amp;L Realizzato</th>
                 </tr>
               </thead>
               <tbody>
@@ -152,7 +160,7 @@ export function CryptoTab({
                   <tr key={asset.id}>
                     <td>
                       <strong>{asset.symbol}</strong>
-                      <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                         {asset.name}
                       </div>
                     </td>
@@ -167,7 +175,7 @@ export function CryptoTab({
                         <input
                           aria-label={`Prezzo ${asset.symbol}`}
                           className="input mono-num"
-                          style={{ width: '105px', padding: '0.25rem 0.45rem', fontSize: '0.78rem' }}
+                          style={{ width: '115px', padding: '0.35rem 0.5rem', fontSize: '0.88rem' }}
                           value={
                             priceEditMap[asset.id] ??
                             (asset.current_price_base / 100).toFixed(2)
@@ -182,7 +190,7 @@ export function CryptoTab({
                         <button
                           type="button"
                           className="btn btn-sm"
-                          title="Aggiorna prezzo e ricalcola widget_snapshot"
+                          title="Aggiorna quotazione"
                           onClick={async () => {
                             const raw =
                               priceEditMap[asset.id] ??
@@ -193,7 +201,7 @@ export function CryptoTab({
                             await onRefresh();
                           }}
                         >
-                          <RefreshCw size={12} />
+                          <RefreshCw size={14} />
                         </button>
                       </div>
                     </td>
@@ -234,10 +242,11 @@ export function CryptoTab({
             <div>
               <h2 className="card-title">
                 <Plus size={17} /> Registra Operazione Crypto
+                <InfoTip
+                  title="Operazioni Crypto"
+                  text="Registra acquisto, vendita (con calcolo automatico plusvalenze/minusvalenze) o rendimento da staking. L'acquisto può alimentare un PAC di risparmio."
+                />
               </h2>
-              <p className="card-subtitle">
-                Acquisto, Vendita (calcola Realized P&amp;L) o Staking Reward (abbassa PMC)
-              </p>
             </div>
           </div>
 
@@ -266,8 +275,8 @@ export function CryptoTab({
               await onRefresh();
               onNotify(
                 cryptoLinkedAccountId
-                  ? 'Operazione Crypto + movimento Fiat bancario collegato registrati (WAC e widget_snapshot aggiornati).'
-                  : 'Operazione Crypto salvata: WAC e widget_snapshot ricalcolati.'
+                  ? 'Operazione Crypto e movimento bancario collegato registrati con successo.'
+                  : 'Operazione Crypto registrata con successo.'
               );
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}
@@ -306,18 +315,22 @@ export function CryptoTab({
                     )
                   }
                 >
-                  <option value="buy">Acquisto (buy)</option>
-                  <option value="sell">Vendita (sell)</option>
-                  <option value="staking_reward">Staking Reward (costo 0)</option>
-                  <option value="transfer_in">Deposito (transfer_in)</option>
-                  <option value="transfer_out">Prelievo (transfer_out)</option>
+                  <option value="buy">Acquisto</option>
+                  <option value="sell">Vendita</option>
+                  <option value="staking_reward">Rendimento Staking</option>
+                  <option value="transfer_in">Trasferimento in Entrata</option>
+                  <option value="transfer_out">Trasferimento in Uscita</option>
                 </select>
               </div>
+            </div>
 
+            <div className="form-grid">
               <div className="field">
-                <label htmlFor="crypto-qty">Quantità (Stringa Decimale)</label>
+                <label htmlFor="crypto-qty">Quantità Coin</label>
                 <input
                   id="crypto-qty"
+                  type="text"
+                  inputMode="decimal"
                   className="input mono-num"
                   value={cryptoQty}
                   onChange={(e) => setCryptoQty(e.target.value)}
@@ -328,11 +341,11 @@ export function CryptoTab({
                 <label htmlFor="crypto-price">Prezzo Unitario (€)</label>
                 <input
                   id="crypto-price"
-                  className="input mono-num"
+                  type="text"
+                  inputMode="decimal"
                   disabled={cryptoTxType === 'staking_reward'}
-                  value={
-                    cryptoTxType === 'staking_reward' ? '0.00' : cryptoPriceMajor
-                  }
+                  className="input mono-num"
+                  value={cryptoPriceMajor}
                   onChange={(e) => setCryptoPriceMajor(e.target.value)}
                 />
               </div>
@@ -340,9 +353,11 @@ export function CryptoTab({
 
             <div className="form-grid">
               <div className="field">
-                <label htmlFor="crypto-fee">Commissione / Fee (€)</label>
+                <label htmlFor="crypto-fee">Commissioni Network (€)</label>
                 <input
                   id="crypto-fee"
+                  type="text"
+                  inputMode="decimal"
                   className="input mono-num"
                   value={cryptoFeeMajor}
                   onChange={(e) => setCryptoFeeMajor(e.target.value)}
@@ -351,7 +366,7 @@ export function CryptoTab({
 
               <div className="field">
                 <label htmlFor="crypto-linked-account">
-                  Conto Bancario Fiat Collegato (<code>linked_account_id</code>)
+                  Conto Bancario Collegato
                 </label>
                 <select
                   id="crypto-linked-account"
@@ -359,7 +374,7 @@ export function CryptoTab({
                   value={cryptoLinkedAccountId}
                   onChange={(e) => setCryptoLinkedAccountId(e.target.value)}
                 >
-                  <option value="">-- Nessun movimento Fiat automatico --</option>
+                  <option value="">-- Nessun movimento bancario automatico --</option>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name} ({formatCents(a.cached_balance, a.currency)})
@@ -374,7 +389,7 @@ export function CryptoTab({
               <input
                 id="crypto-notes"
                 className="input"
-                placeholder="es. PAC mensile / Staking nativo"
+                placeholder="es. PAC mensile / Staking"
                 value={cryptoNotes}
                 onChange={(e) => setCryptoNotes(e.target.value)}
               />
@@ -382,7 +397,7 @@ export function CryptoTab({
 
             <label
               style={{
-                fontSize: '0.8rem',
+                fontSize: '0.88rem',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.45rem',
@@ -401,7 +416,7 @@ export function CryptoTab({
                 checked={cryptoCountPac}
                 onChange={(e) => setCryptoCountPac(e.target.checked)}
               />
-              Conta come PAC nel DailyBudget (<code>include_in_budget = 1</code>)
+              Includi acquisto nel DailyBudget (PAC di risparmio)
             </label>
 
             <button type="submit" className="btn btn-primary">
