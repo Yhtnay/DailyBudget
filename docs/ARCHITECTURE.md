@@ -256,3 +256,85 @@ flowchart LR
     CHECK -- "No (Nuova transazione)" --> INS
 ```
 
+---
+
+## 8. Architettura UI & Layout Semantico WebApp (`View Mode`, Bottom Nav & Split-View)
+
+La WebApp di DailyBudget (`apps/web`) adotta un'architettura di presentazione reattiva a componenti orientata all'ergonomia mobile-first e alla produttività desktop. Il layout supera i tradizionali approcci rigidi a griglia a favore di una gerarchia semantica a **pannelli affiancati (`multi-pane`) e split-view**, governata da un motore unificato di **View Mode**.
+
+### 8.1 Motore di Selezione View Mode (`Auto`, `Mobile`, `Desktop`)
+
+L'applicazione consente sia il rilevamento automatico del dispositivo sia la forzatura esplicita da parte dell'utente tramite il selettore pill integrato nella barra di stato (`PersistenceHeader`), con persistenza in `localStorage` (`dailybudget_view_mode`):
+
+- **Auto (📱🖥️)**: Rileva dinamicamente la larghezza del viewport (`window.innerWidth` con breakpoint a `860px`). Se la finestra è inferiore a `860px`, attiva la modalità Mobile; altrimenti abilita l'esperienza Desktop completa.
+- **Mobile (📱 - `data-view-mode="mobile"`)**: Forza le proporzioni verticali smartphone (`max-width: 480px`), centrando il viewport anche su monitor widescreen per offrire un'interfaccia compatta e maneggevole. Sostituisce la barra superiore con la **Bottom Navigation Bar** fissa a sole icone e aggiunge la barra dedicata `mobile-reference-bar` per la data di simulazione.
+- **Desktop (🖥️ - `data-view-mode="desktop"`)**: Espande il contenitore principale fino a `1440px`, visualizzando la barra superiore di navigazione a schede orizzontali (`nav-strip`) e attivando la disposizione affiancata multi-pannello a schermo intero.
+
+```mermaid
+flowchart TD
+    VM["Preferenza ViewMode (localStorage 'dailybudget_view_mode')"]
+    CHECK{"Preferenza impostata?"}
+    AUTO["Modalità 'Auto'"]
+    FIXED["Modalità Esplicita ('mobile' o 'desktop')"]
+    BP{"window.innerWidth < 860px?"}
+    EFF_MOB["effectiveMode = 'mobile'<br/>Proporzioni 480px & Bottom Nav"]
+    EFF_DSK["effectiveMode = 'desktop'<br/>Proporzioni 1440px & Nav Strip"]
+
+    VM --> CHECK
+    CHECK -- "Non impostata o 'auto'" --> AUTO --> BP
+    CHECK -- "'mobile' o 'desktop'" --> FIXED
+    FIXED -- "mobile" --> EFF_MOB
+    FIXED -- "desktop" --> EFF_DSK
+    BP -- "Sì (< 860px)" --> EFF_MOB
+    BP -- "No (>= 860px)" --> EFF_DSK
+```
+
+### 8.2 Navigazione Adattiva: Desktop Nav-Strip vs Mobile Bottom Nav
+
+La navigazione tra i moduli si adatta per ottimizzare la portata del pollice su smartphone e la densità informativa su grandi schermi:
+
+1. **Desktop Nav-Strip (Superiore)**:
+   - Posizionata sotto la barra di persistenza con schede orizzontali complete.
+   - Mostra icone Lucide, etichette testuali descrittive e conteggi elementi in tempo reale (es. `Conti, Split & Transazioni (18)`).
+   - Include il selettore integrato della data di simulazione contabile.
+2. **Mobile Bottom Navigation Bar (Inferiore, Fissa a Sole Icone)**:
+   - Ancorata al fondo dello schermo (`position: fixed; bottom: 0; height: 58px; z-index: 50`) con gestione dell'area sicura iOS (`env(safe-area-inset-bottom)`).
+   - Composta da pulsanti touch a sole icone (`48x44px`) conformi agli standard ergonomici di tocco.
+   - Indicatori visivi dot badge (`bottom-nav-dot`) che notificano la presenza di entità caricate nei moduli Transazioni, Tricount, Prestiti e Crypto.
+   - Quando visualizzata in modalità Mobile su display desktop ampi, la barra inferiore rimane centrata e vincolata alla larghezza del frame smartphone (`max-width: 480px; left: 50%; transform: translateX(-50%)`).
+   - Gestione della data di simulazione tramite barra secondaria dedicata (`mobile-reference-bar`).
+
+### 8.3 Pattern Semantico di Layout: Pannelli e Split-View
+
+La composizione visiva dell'interfaccia adotta un modello semantico a **pannelli funzionali**, superando la vecchia terminologia a griglie e colonne generiche:
+
+```mermaid
+flowchart LR
+    subgraph DesktopLayout["Desktop View (Widescreen >= 860px)"]
+        direction TB
+        D_NAV["Nav-Strip Superiore (Schede + Data)"]
+        subgraph SplitExample["Split-View Affiancata (desktop-split-view)"]
+            P1["Pannello Input Primario<br/>(es. Form Transazione / Import CSV / Form Prestito)"]
+            P2["Pannello Contesto & Storico<br/>(es. Lista Transazioni / Riepilogo Saldi / Allegati)"]
+            P1 --- P2
+        end
+        D_NAV --> SplitExample
+    end
+
+    subgraph MobileLayout["Mobile View (Smartphone < 860px o Forzato)"]
+        direction TB
+        M_REF["Mobile Reference Date Bar"]
+        M_P1["Pannello Input Primario"]
+        M_P2["Pannello Contesto & Storico"]
+        M_NAV["Mobile Bottom Navigation Bar (Icon-Only)"]
+        M_REF --> M_P1 --> M_P2 --> M_NAV
+    end
+```
+
+- **`.desktop-multi-pane`**: Layout asimmetrico per la Dashboard principale (`1.35fr 1fr`). Affianca il pannello eroe del DailyBudget (`daily-hero`) con il pannello informativo dello snapshot nativo e del patrimonio netto.
+- **`.desktop-split-view`**: Layout a divisione funzionale (`minmax(360px, 1fr) minmax(460px, 1.4fr)`). Mantiene visibile e accessibile il pannello di immissione/configurazione a sinistra mentre visualizza contestualmente i dati elaborati o lo storico a destra (utilizzato nei moduli Transazioni, Tricount, Prestiti e Crypto).
+- **`.panel-pair`**: Suddivisione paritetica a due pannelli (`repeat(2, minmax(0, 1fr))`) per sezioni di uguale rilevanza visiva (es. Pannello Importazione Estratto Conto CSV vs Pannello Scontrini e Ricevute Ibridi).
+- **`.metric-tile-group`**: Raggruppamento semantico per tessere metriche e indicatori KPI (`repeat(4, minmax(0, 1fr))` su schermi ampi, responsive su mobile a 2 o 1 pannello).
+- **Collasso Reattivo Unificato**: In modalità Mobile (`data-view-mode="mobile"` o viewport `< 860px`), tutti i pannelli multi-pane, split-view e panel-pair collassano a colonna singola a scorrimento verticale (`1fr`), garantendo un'ergonomia lineare priva di scroll orizzontali indesiderati.
+
+

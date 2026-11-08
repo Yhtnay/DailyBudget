@@ -161,6 +161,14 @@ Puoi utilizzare DailyBudget comodamente da qualsiasi browser per smartphone (iOS
 
 L'icona di DailyBudget apparirà sulla tua Home: aprendola, funzionerà a **schermo intero** come un'app nativa e potrà essere usata anche **senza connessione internet**.
 
+### Esperienza Mobile-First & Navigazione:
+- **Bottom Navigation Bar (Fissa in Basso)**: Su smartphone, la barra di navigazione si ancora al fondo dello schermo (`58px` di altezza) con pulsanti touch a sole icone ergonomiche e indicatori badge dot per accedere con il pollice a Dashboard, Transazioni, Tricount, Prestiti, Crypto e Impostazioni.
+- **Barra Data di Riferimento Dedicata**: La data di simulazione per testare scenari futuri o passati è comodamente posizionata in una barra compatta subito sotto la barra di stato.
+- **Selettore View Mode (Auto / Mobile / Desktop)**: Nella barra di stato superiore trovi il selettore per scegliere la modalità di visualizzazione:
+  - **Auto**: Riconosce automaticamente le dimensioni del dispositivo.
+  - **Mobile**: Mantiene le proporzioni compatte dello smartphone (`480px`) con navigazione inferiore anche se apri l'app su un monitor desktop.
+  - **Desktop**: Espande l'interfaccia a schermo intero widescreen (`1440px`) con navigazione a schede in alto e layout a pannelli affiancati (split-view).
+
 ---
 
 ## 6. Sicurezza e Protezione con PIN Locale
