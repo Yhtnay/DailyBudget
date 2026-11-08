@@ -1,91 +1,100 @@
-# Architettura Multi-Agente: Orchestratore & Sub-Agenti (DailyBudget)
+# Architettura Multi-Agente: Orchestratore & 6 Sub-Agenti (DailyBudget)
 
-Questo documento definisce la topologia dell'**Orchestratore** e dei **5 Sub-Agenti specializzati** registrati per lo sviluppo parallelo e sicuro del monorepo **DailyBudget** (`Turborepo` + `pnpm`).
+Questo documento definisce la topologia dell'**Orchestratore** e dei **6 Sub-Agenti specializzati** registrati per lo sviluppo parallelo e sicuro del monorepo **DailyBudget** (`Turborepo` + `pnpm`).
 
 ---
 
-## 1. Principi di Coordinamento e Anti-Collisione
+## 1. Topologia Multi-Agente e Ownership Disgiunta (`flowchart`)
 
-Poiché il monorepo è condiviso nello stesso workspace (`inherit`), l'architettura adotta una **partizione stretta per pacchetto (Directory Ownership)**:
+Poiché il monorepo risiede in un workspace condiviso (`inherit`), l'architettura assegna ad ogni sub-agente una **cartella esclusiva (Zero-Collision Ownership)**:
 
-```text
-                       ┌──────────────────────────────────────┐
-                       │           ORCHESTRATORE              │
-                       │  (Lead Architect & Release Manager)  │
-                       └──────────────────┬───────────────────┘
-                                          │
-       ┌─────────────────┬────────────────┼────────────────┬─────────────────┐
-       ▼                 ▼                ▼                ▼                 ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  core-quant  │ │  db-storage  │ │    web-ui    │ │mobile-native │ │  qa-auditor  │
-│    -agent    │ │    -agent    │ │    -agent    │ │    -agent    │ │    -agent    │
-├──────────────┤ ├──────────────┤ ├──────────────┤ ├──────────────┤ ├──────────────┤
-│packages/core/│ │ packages/db/ │ │  apps/web/   │ │ apps/mobile/ │ │ Cross-Pkg    │
-│ Pure TS Math │ │ SQLite-Wasm  │ │ packages/ui/ │ │ WidgetKit &  │ │ Invariants & │
-│ Zero-Float   │ │ OPFS & Disk  │ │ React + Vite │ │ WatchOS/Wear │ │ Edge Tests   │
-└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+```mermaid
+flowchart TD
+    ORCH["ORCHESTRATORE (Lead Architect & Release Manager)"]
+
+    subgraph CodeAgents["Sub-Agenti di Sviluppo (Ownership per Pacchetto)"]
+        CORE["core-quant-agent (packages/core/**)"]
+        DB["db-storage-agent (packages/db/**)"]
+        WEB["web-ui-agent (apps/web/** & packages/ui/**)"]
+        MOB["mobile-native-agent (apps/mobile/**)"]
+    end
+
+    subgraph CrossAgents["Sub-Agenti di Qualità & Documentazione Continua"]
+        QA["qa-auditor-agent (Test Suite *.test.ts & Audit Invarianti)"]
+        DOCS["docs-architect-agent (docs/** & README.md + Schemi Mermaid)"]
+    end
+
+    ORCH --> CORE
+    ORCH --> DB
+    ORCH --> WEB
+    ORCH --> MOB
+    ORCH --> QA
+    ORCH --> DOCS
+
+    CORE -. "Espone Tipi & Algoritmi Puri" .-> DB
+    DB -. "Espone Repository & Storage" .-> WEB
+    DB -. "Espone .dbbudget & widget_snapshot" .-> MOB
 ```
 
-### Regole dell'Orchestratore
-1. **Contract-First**: Prima di lanciare sub-agenti in parallelo, l'Orchestratore definisce le interfacce TypeScript condivise (input/output tra `@dailybudget/core`, `@dailybudget/db` e le viste UI).
-2. **Parallelismo Disgiunto**: Due sub-agenti di scrittura possono lavorare in contemporanea **solo** se operano nelle rispettive cartelle esclusive (es. `core-quant-agent` in `packages/core` + `web-ui-agent` in `apps/web`).
-3. **Pipeline Sequenziale per Modifiche Strutturali**: Quando una feature richiede una modifica allo schema SQLite:
-   - **Step 1**: `core-quant-agent` implementa la formula/algoritmo in `packages/core`.
-   - **Step 2**: `db-storage-agent` aggiorna `packages/db` (`schema.ts`, `database.ts`, `widget_snapshot`).
-   - **Step 3**: `web-ui-agent` e `mobile-native-agent` aggiornano in parallelo `apps/web` e `apps/mobile`.
-   - **Step 4**: `qa-auditor-agent` esegue la batteria di test sugli invarianti contabili (`pnpm test && pnpm typecheck && pnpm build`).
+---
+
+## 2. Pipeline di Esecuzione di una Feature (`sequenceDiagram`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Utente
+    participant Orch as Orchestratore
+    participant Core as core-quant-agent
+    participant Db as db-storage-agent
+    participant Web as web-ui-agent
+    participant Qa as qa-auditor-agent
+    participant Docs as docs-architect-agent
+
+    User->>Orch: Richiede nuova feature o regola di business
+    Orch->>Orch: Definisce contratti TypeScript e invarianti contabili
+    Orch->>Core: Implementa logica pura in packages/core
+    Core-->>Orch: Funzioni pure + Unit Test verdi
+    Orch->>Db: Aggiorna schema/query/persistenza in packages/db
+    Db-->>Orch: Repository + widget_snapshot + DB Test verdi
+
+    par Sviluppo Parallelo Senza Collisioni di File
+        Orch->>Web: Aggiorna UI/UX in apps/web
+        Orch->>Docs: Aggiorna docs/*.md e diagrammi Mermaid
+    end
+
+    Web-->>Orch: Build Vite completata
+    Docs-->>Orch: Documentazione allineata
+    Orch->>Qa: Esegue audit invarianti e test end-to-end
+    Qa-->>Orch: Report QA (pnpm test && pnpm typecheck && pnpm build)
+    Orch->>User: Commit & Push su GitHub + Anteprima Live
+```
 
 ---
 
-## 2. Schede dei Sub-Agenti Registrati
+## 3. Schede dei 6 Sub-Agenti Registrati
 
 ### 1. `core-quant-agent` — *Financial & Crypto Core Engine Specialist*
 - **Ownership**: `packages/core/**`
-- **Responsabilità**:
-  - Evoluzione dei 4 motori matematici (`doesTransactionAffectBudget`, `calculateDailyBudget`, `calculateTricountSettlements`, `calculateCryptoAssetMetrics`).
-  - Conversione multi-valuta a 3 livelli per Tricount (`Valuta Spesa -> Valuta Gruppo -> Valuta Base Workspace`) senza perdita di precisione in centesimi.
-  - Motore di espansione e schedulazione delle ricorrenze (`recurring_rules`: `daily`, `weekly`, `monthly`, `yearly`).
-  - Validazione degli split multi-categoria (`validateTransactionSplits`) e distribuzione deterministica dei resti in centesimi (`computeTricountExpenseSplits`).
-- **Vincolo Ferreo**: Zero dipendenze esterne o di piattaforma; importi Fiat esclusivamente in `integer cents`; quantità Crypto in stringhe decimali.
-
----
+- **Responsabilità**: Algoritmi matematici puri (`doesTransactionAffectBudget`, `calculateDailyBudget`, `calculateTricountSettlements`, `calculateCryptoAssetMetrics`, `computeTricountExpenseSplits`, conversioni multi-valuta a 3 livelli, motore `recurring_rules`).
+- **Vincolo Ferreo**: Zero dipendenze esterne; importi Fiat esclusivamente in `integer cents`; quantità Crypto in stringhe decimali.
 
 ### 2. `db-storage-agent` — *SQLite-Wasm, OPFS & Sync Specialist*
 - **Ownership**: `packages/db/**`
-- **Responsabilità**:
-  - Gestione DDL e migrazioni di `schema_v2.sql` mantendo compatibilità con il formato binario `.dbbudget` (`SQLite format 3\0`).
-  - Persistenza ibrida `OPFS` (`navigator.storage.getDirectory()`) + `File System Access API` (`FileSystemFileHandle.createWritable()`) + fallback IndexedDB.
-  - Aggiornamento atomico di `accounts.cached_balance` e della riga singola `widget_snapshot` (`id = 'current'`) ad ogni mutazione.
-  - Import/Export CSV, JSON e integrazione offline-first dei cambi valuta (Frankfurter API) e prezzi Crypto (CoinGecko API) con cache in `exchange_rates` e `crypto_assets`.
-  - Progettazione del Sync Adapter E2EE / CRDT opzionale per conti e gruppi Tricount condivisi.
-
----
+- **Responsabilità**: Gestione DDL/migrazioni `schema_v2.sql`, formato binario `.dbbudget` (`SQLite format 3\0`), persistenza ibrida `OPFS` + `File System Access API`, ricalcolo atomico di `accounts.cached_balance` e `widget_snapshot` (`id = 'current'`), adapter API Frankfurter/CoinGecko offline-first.
 
 ### 3. `web-ui-agent` — *Frontend, Design System & Accessibility Specialist*
 - **Ownership**: `apps/web/**`, `packages/ui/**`
-- **Responsabilità**:
-  - Sviluppo delle viste React + Vite (Dashboard DailyBudget, Conti/Split/Tag, Tricount, Prestiti, Crypto Portfolio).
-  - Design System con supporto Light/Dark Theme, numeri tabulari (`font-variant-numeric: tabular-nums`), accessibilità WCAG/ARIA e navigazione da tastiera.
-  - Rappresentazione visiva chiara della separazione tra **Cashflow Bancario (`base_amount`)** e **Competenza Budget (`budget_base_amount`)**, e dello stato di override `include_in_budget` (`NULL`, `1`, `0`).
-- **Vincolo Ferreo**: Vietato duplicare formule matematiche o query SQL nei componenti React; deve invocare esclusivamente `@dailybudget/core` e `@dailybudget/db`.
-
----
+- **Responsabilità**: Viste React + Vite, Design System Light/Dark, numeri tabulari (`tabular-nums`), accessibilità WCAG/ARIA, distinzione visiva tra `base_amount` (Cashflow) e `budget_base_amount` (Competenza Budget).
 
 ### 4. `mobile-native-agent` — *Expo, WidgetKit, WatchOS, Glance & Wear OS Specialist*
 - **Ownership**: `apps/mobile/**`
-- **Responsabilità**:
-  - Setup React Native + Expo Prebuild (Continuous Native Generation).
-  - Configurazione dell'App Group (iOS) e Shared Storage (Android) per condividere il file `.dbbudget` tra l'app principale e le estensioni native.
-  - Sviluppo dei target nativi in Swift (WidgetKit, Siri App Intents, WatchOS) e Kotlin (Jetpack Glance, Wear OS Tiles) che leggono direttamente `SELECT * FROM widget_snapshot WHERE id = 'current'` in $O(1)$ senza avviare il runtime JS.
-
----
+- **Responsabilità**: App React Native + Expo Prebuild (CNG) e target nativi Swift/Kotlin che leggono direttamente `SELECT * FROM widget_snapshot WHERE id = 'current'` dal file `.dbbudget` in App Group / Shared Storage in $O(1)$.
 
 ### 5. `qa-auditor-agent` — *Accounting Invariants & Edge-Case Auditor*
-- **Ownership**: Trasversale (test suite `*.test.ts` e verifica invarianti)
-- **Responsabilità**:
-  - Verifica sistematica degli invarianti di `HANDOFF_CONTEXT.md`:
-    1. Arrotondamenti su divisioni dispari (es. `100,00 € / 3 = 33,34 € + 33,33 € + 33,33 €`).
-    2. Priorità assoluta `Transazione (0|1) > Conto (default)` su tutte le tipologie (`expense`, `income`, `transfer`, `loan_movement`, `tricount_settlement`).
-    3. Allineamento tra `sum(transaction_splits.amount_base)` e `transactions.budget_base_amount`.
-    4. Ricalcolo PMC (WAC) post-staking reward (costo zero) e post-vendita parziale.
-    5. Validità dell'header SQLite3 sui file `.dbbudget` esportati e coerenza di `widget_snapshot`.
+- **Ownership**: Trasversale (`*.test.ts`)
+- **Responsabilità**: Audit e test end-to-end su resti dispari (`100€ / 3`), priorità `Transazione > Conto`, allineamento `sum(transaction_splits) == budget_base_amount`, PMC post-staking a costo zero e validità binaria `.dbbudget`.
+
+### 6. `docs-architect-agent` — *Documentation, Product Analysis & Mermaid Diagrams Specialist*
+- **Ownership**: `docs/**` e `README.md`
+- **Responsabilità**: Mantenere sempre sincronizzata la suite documentale (`ARCHITECTURE.md`, `PRODUCT_ANALYSIS.md`, `DATABASE_SCHEMA.md`, `AGENTS_ARCHITECTURE.md`, `README.md`) corredata da diagrammi Mermaid (`flowchart`, `sequenceDiagram`, `erDiagram`, `stateDiagram-v2`) ad ogni evoluzione dello schema o delle regole di business.
