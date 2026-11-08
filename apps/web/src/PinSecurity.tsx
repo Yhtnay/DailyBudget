@@ -9,30 +9,29 @@ import {
   KeyRound,
   Lock,
   Moon,
-  RotateCcw,
   Shield,
   ShieldAlert,
   ShieldCheck,
   Sun,
+  Trash2,
   Unlock,
 } from 'lucide-react';
 
-export const DEFAULT_PIN = '150116';
-export const PIN_STORAGE_KEY = 'dailybudget_beta_pin_code';
-export const PIN_ENABLED_KEY = 'dailybudget_beta_pin_enabled';
-export const PIN_SESSION_KEY = 'dailybudget_beta_unlocked';
+export const PIN_STORAGE_KEY = 'dailybudget_pin_code';
+export const PIN_ENABLED_KEY = 'dailybudget_pin_enabled';
+export const PIN_SESSION_KEY = 'dailybudget_unlocked';
 
-export function getStoredPin(): string {
-  if (typeof window === 'undefined') return DEFAULT_PIN;
+export function getStoredPin(): string | null {
+  if (typeof window === 'undefined') return null;
   const pin = localStorage.getItem(PIN_STORAGE_KEY);
-  return pin && pin.trim().length >= 4 ? pin.trim() : DEFAULT_PIN;
+  return pin && pin.trim().length >= 4 ? pin.trim() : null;
 }
 
 export function isPinProtectionEnabled(): boolean {
-  if (typeof window === 'undefined') return true;
-  const val = localStorage.getItem(PIN_ENABLED_KEY);
-  if (val === null) return true; // Default attivo con 150116
-  return val === 'true';
+  if (typeof window === 'undefined') return false;
+  const isEnabled = localStorage.getItem(PIN_ENABLED_KEY) === 'true';
+  const hasPin = Boolean(getStoredPin());
+  return isEnabled && hasPin;
 }
 
 export function isSessionUnlocked(): boolean {
@@ -41,23 +40,19 @@ export function isSessionUnlocked(): boolean {
   return sessionStorage.getItem(PIN_SESSION_KEY) === 'true';
 }
 
-export function setPinProtectionEnabled(enabled: boolean): void {
+export function setPinProtection(newPin: string): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(PIN_ENABLED_KEY, enabled ? 'true' : 'false');
-  if (!enabled) {
-    sessionStorage.setItem(PIN_SESSION_KEY, 'true');
-  }
-}
-
-export function setStoredPin(newPin: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(PIN_STORAGE_KEY, newPin.trim());
-}
-
-export function resetPinToDefault(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(PIN_STORAGE_KEY, DEFAULT_PIN);
+  const trimmed = newPin.trim();
+  localStorage.setItem(PIN_STORAGE_KEY, trimmed);
   localStorage.setItem(PIN_ENABLED_KEY, 'true');
+  sessionStorage.setItem(PIN_SESSION_KEY, 'true');
+}
+
+export function removePinProtection(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(PIN_STORAGE_KEY);
+  localStorage.setItem(PIN_ENABLED_KEY, 'false');
+  sessionStorage.setItem(PIN_SESSION_KEY, 'true');
 }
 
 export function lockSession(): void {
@@ -90,8 +85,8 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   const [isShaking, setIsShaking] = useState<boolean>(false);
   const [showDigits, setShowDigits] = useState<boolean>(false);
 
-  const currentPin = getStoredPin();
-  const maxDigits = Math.max(6, currentPin.length);
+  const currentPin = getStoredPin() || '';
+  const expectedLength = Math.max(4, currentPin.length);
 
   const triggerError = useCallback(() => {
     setIsShaking(true);
@@ -105,7 +100,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   const handleVerify = useCallback(
     (codeToTest: string) => {
       const targetPin = getStoredPin();
-      if (codeToTest === targetPin) {
+      if (targetPin && codeToTest === targetPin) {
         unlockSession();
         onUnlock();
       } else {
@@ -117,15 +112,15 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
 
   const handleDigit = useCallback(
     (digit: string) => {
-      if (pinInput.length >= maxDigits) return;
+      if (pinInput.length >= expectedLength) return;
       setErrorMsg(null);
       const next = pinInput + digit;
       setPinInput(next);
-      if (next.length === currentPin.length) {
+      if (currentPin && next.length === currentPin.length) {
         handleVerify(next);
       }
     },
-    [pinInput, maxDigits, currentPin.length, handleVerify]
+    [pinInput, expectedLength, currentPin, handleVerify]
   );
 
   const handleDelete = useCallback(() => {
@@ -138,7 +133,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
     setPinInput('');
   }, []);
 
-  // Keyboard navigation support
+  // Physical keyboard support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key >= '0' && e.key <= '9') {
@@ -148,7 +143,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
       } else if (e.key === 'Escape') {
         handleClear();
       } else if (e.key === 'Enter') {
-        if (pinInput.length > 0) {
+        if (pinInput.length >= 4) {
           handleVerify(pinInput);
         }
       }
@@ -177,7 +172,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
             <ShieldCheck size={28} className="shield-icon" />
           </div>
           <h1 className="pin-card-title">DailyBudget</h1>
-          <div className="pin-beta-pill">ACCESSO PROTETTO • BETA</div>
+          <div className="pin-beta-pill">ACCESSO PROTETTO</div>
           <p className="pin-card-subtitle">
             Inserisci il codice PIN per accedere all'applicazione sul dispositivo.
           </p>
@@ -186,7 +181,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
         {/* Display Dots / Digits */}
         <div className="pin-display-cluster">
           <div className="pin-dots-container">
-            {Array.from({ length: currentPin.length }).map((_, idx) => {
+            {Array.from({ length: expectedLength }).map((_, idx) => {
               const isFilled = idx < pinInput.length;
               return (
                 <div
@@ -259,26 +254,21 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
           </button>
         </div>
 
-        {/* Action Button for confirmation if length < currentPin */}
         <div style={{ marginTop: '1rem', width: '100%' }}>
           <button
             type="button"
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center' }}
             onClick={() => handleVerify(pinInput)}
-            disabled={pinInput.length === 0}
+            disabled={pinInput.length < 4}
           >
             <Unlock size={16} /> Sblocca DailyBudget
           </button>
         </div>
 
         <div className="pin-footer-hint">
-          <p>
-            PIN predefinito di fabbrica:{' '}
-            <strong className="mono-num">150116</strong>
-          </p>
-          <p style={{ marginTop: '0.2rem', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            Puoi modificare o disattivare il PIN nel menu <em>Impostazioni</em>.
+          <p style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
+            Il PIN è memorizzato esclusivamente nel browser locale di questo dispositivo.
           </p>
         </div>
       </div>
@@ -292,7 +282,7 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
 
 interface SecuritySettingsProps {
   isPinEnabled: boolean;
-  onPinStateChange: (enabled: boolean, newPin?: string) => void;
+  onPinStateChange: (enabled: boolean) => void;
   onLockNow: () => void;
 }
 
@@ -303,21 +293,47 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
 }) => {
   const currentPin = getStoredPin();
 
-  // Change PIN form state
+  // Create PIN state (when no PIN exists)
+  const [createPin, setCreatePin] = useState('');
+  const [createPinConfirm, setCreatePinConfirm] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null);
+
+  // Change PIN state
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [changeError, setChangeError] = useState<string | null>(null);
   const [changeSuccess, setChangeSuccess] = useState<string | null>(null);
 
-  // Toggle PIN protection state
-  const [toggleConfirmPin, setToggleConfirmPin] = useState('');
-  const [toggleError, setToggleError] = useState<string | null>(null);
-  const [toggleSuccess, setToggleSuccess] = useState<string | null>(null);
-  const [showDisableConfirm, setShowDisableConfirm] = useState(false);
+  // Remove PIN state
+  const [removeConfirmPin, setRemoveConfirmPin] = useState('');
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeSuccess, setRemoveSuccess] = useState<string | null>(null);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
 
-  // Reset to default feedback
-  const [resetNotice, setResetNotice] = useState<string | null>(null);
+  const handleCreatePin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateError(null);
+    setCreateSuccess(null);
+
+    const pin = createPin.trim();
+    if (!/^\d{4,8}$/.test(pin)) {
+      setCreateError('Il PIN deve essere composto da un numero di cifre compreso tra 4 e 8.');
+      return;
+    }
+    if (pin !== createPinConfirm.trim()) {
+      setCreateError('I due campi del PIN non corrispondono.');
+      return;
+    }
+
+    setPinProtection(pin);
+    onPinStateChange(true);
+    setCreatePin('');
+    setCreatePinConfirm('');
+    setCreateSuccess('Protezione con PIN attivata con successo! Verrà richiesto al prossimo avvio.');
+    setTimeout(() => setCreateSuccess(null), 4000);
+  };
 
   const handleUpdatePin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -338,50 +354,30 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
     }
 
     const updated = newPin.trim();
-    setStoredPin(updated);
-    onPinStateChange(true, updated);
+    setPinProtection(updated);
+    onPinStateChange(true);
     setOldPin('');
     setNewPin('');
     setConfirmPin('');
-    setChangeSuccess('PIN modificato con successo! Il nuovo PIN è attivo.');
+    setChangeSuccess('PIN modificato con successo!');
     setTimeout(() => setChangeSuccess(null), 4000);
   };
 
-  const handleToggleProtection = () => {
-    setToggleError(null);
-    setToggleSuccess(null);
+  const handleRemovePin = () => {
+    setRemoveError(null);
+    setRemoveSuccess(null);
 
-    if (isPinEnabled) {
-      // Disabling requires current PIN verification
-      if (toggleConfirmPin !== currentPin) {
-        setToggleError('Inserisci il PIN attuale corretto per disattivare la protezione.');
-        return;
-      }
-      setPinProtectionEnabled(false);
-      onPinStateChange(false);
-      setShowDisableConfirm(false);
-      setToggleConfirmPin('');
-      setToggleSuccess('Protezione con PIN disattivata. La WebApp si aprirà senza PIN.');
-    } else {
-      // Enabling
-      setPinProtectionEnabled(true);
-      onPinStateChange(true);
-      setToggleSuccess('Protezione con PIN attivata con successo.');
+    if (removeConfirmPin !== currentPin) {
+      setRemoveError('Inserisci il PIN attuale corretto per rimuovere la protezione.');
+      return;
     }
-    setTimeout(() => setToggleSuccess(null), 4000);
-  };
 
-  const handleResetDefault = () => {
-    if (
-      window.confirm(
-        'Vuoi reimpostare il PIN di default (150116) e riabilitare la protezione all\'avvio?'
-      )
-    ) {
-      resetPinToDefault();
-      onPinStateChange(true, DEFAULT_PIN);
-      setResetNotice('PIN ripristinato a 150116 e protezione attivata.');
-      setTimeout(() => setResetNotice(null), 4000);
-    }
+    removePinProtection();
+    onPinStateChange(false);
+    setShowRemoveConfirm(false);
+    setRemoveConfirmPin('');
+    setRemoveSuccess('Protezione PIN rimossa con successo. La WebApp si aprirà senza PIN.');
+    setTimeout(() => setRemoveSuccess(null), 4000);
   };
 
   return (
@@ -391,154 +387,53 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
         <div className="card-header">
           <div className="card-title">
             <ShieldCheck size={18} style={{ color: 'var(--accent-primary)' }} />
-            Sicurezza &amp; Protezione Accesso (Beta Gatekeeper)
+            Sicurezza &amp; Protezione Accesso
           </div>
           <span
             className={`status-pill ${
               isPinEnabled ? 'status-safe' : 'status-warning'
             }`}
           >
-            {isPinEnabled ? 'PIN Attivo' : 'PIN Disattivato'}
+            {isPinEnabled ? 'PIN Attivo' : 'Nessun PIN (Disattivato)'}
           </span>
         </div>
 
         <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-          La protezione con codice PIN tutela la tua privacy durante la fase di beta testing,
-          impedendo l'accesso non autorizzato ai tuoi dati finanziari sia quando apri l'app
-          tramite GitHub Pages, sia sul browser del tuo smartphone.
+          La protezione con codice PIN è facoltativa e opera al 100% in locale sul tuo browser.
+          Se abilitata, impedisce l'accesso ai tuoi dati contabili all'apertura dell'applicazione,
+          ideale se utilizzi DailyBudget da browser mobile o condividi il dispositivo.
         </p>
 
-        {toggleSuccess && (
+        {createSuccess && (
           <div className="banner-notice" style={{ marginBottom: '1rem', color: 'var(--status-safe)' }}>
             <CheckCircle2 size={16} />
-            <span>{toggleSuccess}</span>
+            <span>{createSuccess}</span>
           </div>
         )}
-        {resetNotice && (
+        {removeSuccess && (
           <div className="banner-notice" style={{ marginBottom: '1rem', color: 'var(--status-safe)' }}>
             <CheckCircle2 size={16} />
-            <span>{resetNotice}</span>
+            <span>{removeSuccess}</span>
           </div>
         )}
-
-        {/* Toggle Enable / Disable */}
-        <div
-          style={{
-            padding: '1rem',
-            backgroundColor: 'var(--bg-elevated)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border-subtle)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.75rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                Richiedi PIN all'avvio dell'applicazione
-              </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                {isPinEnabled
-                  ? 'Il PIN viene richiesto all\'apertura della pagina sul dispositivo.'
-                  : 'La WebApp si apre immediatamente senza richiesta di sblocco.'}
-              </div>
-            </div>
-
-            {isPinEnabled ? (
-              <button
-                type="button"
-                className="btn btn-danger btn-sm"
-                onClick={() => setShowDisableConfirm((v) => !v)}
-              >
-                <Lock size={14} /> Disattiva PIN
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={handleToggleProtection}
-              >
-                <Unlock size={14} /> Attiva PIN
-              </button>
-            )}
-          </div>
-
-          {showDisableConfirm && isPinEnabled && (
-            <div
-              style={{
-                marginTop: '0.5rem',
-                paddingTop: '0.75rem',
-                borderTop: '1px solid var(--border-subtle)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-              }}
-            >
-              <label
-                htmlFor="toggle-confirm-pin"
-                style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}
-              >
-                Inserisci il PIN attuale per confermare la disattivazione:
-              </label>
-              <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '340px' }}>
-                <input
-                  id="toggle-confirm-pin"
-                  type="password"
-                  className="input mono-num"
-                  placeholder="PIN attuale"
-                  maxLength={8}
-                  value={toggleConfirmPin}
-                  onChange={(e) => setToggleConfirmPin(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn btn-danger btn-sm"
-                  onClick={handleToggleProtection}
-                >
-                  Conferma
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => {
-                    setShowDisableConfirm(false);
-                    setToggleError(null);
-                  }}
-                >
-                  Annulla
-                </button>
-              </div>
-              {toggleError && (
-                <div style={{ fontSize: '0.78rem', color: 'var(--status-danger)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <AlertCircle size={14} /> {toggleError}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </section>
 
-      {/* Change PIN Form */}
-      {isPinEnabled && (
+      {/* Case 1: No PIN configured yet -> Show Setup Form */}
+      {!isPinEnabled && (
         <section className="card">
           <div className="card-header">
             <div className="card-title">
               <KeyRound size={18} style={{ color: 'var(--accent-primary)' }} />
-              Modifica Codice PIN
+              Imposta un Codice PIN di Blocco
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={handleResetDefault}
-              title="Ripristina 150116"
-            >
-              <RotateCcw size={13} /> Reimposta default (150116)
-            </button>
           </div>
 
-          <form onSubmit={handleUpdatePin} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-            {changeError && (
+          <p style={{ fontSize: '0.83rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+            Nessun PIN è attualmente configurato. Puoi sceglierne uno composto da 4 a 8 cifre numeriche.
+          </p>
+
+          <form onSubmit={handleCreatePin} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+            {createError && (
               <div
                 style={{
                   backgroundColor: 'var(--status-danger-bg)',
@@ -552,110 +447,261 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                 }}
               >
                 <AlertCircle size={15} />
-                <span>{changeError}</span>
-              </div>
-            )}
-
-            {changeSuccess && (
-              <div
-                style={{
-                  backgroundColor: 'var(--status-safe-bg)',
-                  color: 'var(--status-safe)',
-                  padding: '0.6rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: '0.82rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                }}
-              >
-                <Check size={15} />
-                <span>{changeSuccess}</span>
+                <span>{createError}</span>
               </div>
             )}
 
             <div className="form-grid">
               <div className="field">
-                <label htmlFor="change-pin-old">PIN Attuale</label>
+                <label htmlFor="setup-new-pin">Nuovo PIN (4-8 cifre)</label>
                 <input
-                  id="change-pin-old"
+                  id="setup-new-pin"
                   type="password"
                   className="input mono-num"
-                  placeholder="es. 150116"
+                  placeholder="Es. 4 o 6 cifre"
                   maxLength={8}
-                  value={oldPin}
-                  onChange={(e) => setOldPin(e.target.value)}
+                  value={createPin}
+                  onChange={(e) => setCreatePin(e.target.value)}
                   required
                 />
               </div>
 
               <div className="field">
-                <label htmlFor="change-pin-new">Nuovo PIN (4-8 cifre)</label>
+                <label htmlFor="setup-confirm-pin">Conferma Nuovo PIN</label>
                 <input
-                  id="change-pin-new"
+                  id="setup-confirm-pin"
                   type="password"
                   className="input mono-num"
-                  placeholder="Nuovo codice"
+                  placeholder="Ripeti il PIN"
                   maxLength={8}
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="change-pin-confirm">Conferma Nuovo PIN</label>
-                <input
-                  id="change-pin-confirm"
-                  type="password"
-                  className="input mono-num"
-                  placeholder="Ripeti nuovo codice"
-                  maxLength={8}
-                  value={confirmPin}
-                  onChange={(e) => setConfirmPin(e.target.value)}
+                  value={createPinConfirm}
+                  onChange={(e) => setCreatePinConfirm(e.target.value)}
                   required
                 />
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <div style={{ marginTop: '0.5rem' }}>
               <button type="submit" className="btn btn-primary">
-                <Check size={15} /> Salva Nuovo PIN
+                <Lock size={15} /> Attiva Protezione PIN
               </button>
             </div>
           </form>
         </section>
       )}
 
-      {/* Immediate Lock & Session Actions */}
-      <section className="card">
-        <div className="card-header">
-          <div className="card-title">
-            <Lock size={18} style={{ color: 'var(--accent-primary)' }} />
-            Test e Blocco Sessione
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>
-              Blocca Schermata Adesso
+      {/* Case 2: PIN already enabled -> Show Change Form & Remove Button */}
+      {isPinEnabled && (
+        <>
+          <section className="card">
+            <div className="card-header">
+              <div className="card-title">
+                <KeyRound size={18} style={{ color: 'var(--accent-primary)' }} />
+                Modifica Codice PIN
+              </div>
             </div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              Torna alla schermata di inserimento PIN per verificare il funzionamento.
-            </div>
-          </div>
 
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onLockNow}
-            disabled={!isPinEnabled}
-          >
-            <Lock size={14} /> Blocca Ora
-          </button>
-        </div>
-      </section>
+            <form onSubmit={handleUpdatePin} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              {changeError && (
+                <div
+                  style={{
+                    backgroundColor: 'var(--status-danger-bg)',
+                    color: 'var(--status-danger)',
+                    padding: '0.6rem 0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <AlertCircle size={15} />
+                  <span>{changeError}</span>
+                </div>
+              )}
+
+              {changeSuccess && (
+                <div
+                  style={{
+                    backgroundColor: 'var(--status-safe-bg)',
+                    color: 'var(--status-safe)',
+                    padding: '0.6rem 0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <Check size={15} />
+                  <span>{changeSuccess}</span>
+                </div>
+              )}
+
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="change-pin-old">PIN Attuale</label>
+                  <input
+                    id="change-pin-old"
+                    type="password"
+                    className="input mono-num"
+                    placeholder="PIN in uso"
+                    maxLength={8}
+                    value={oldPin}
+                    onChange={(e) => setOldPin(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="change-pin-new">Nuovo PIN (4-8 cifre)</label>
+                  <input
+                    id="change-pin-new"
+                    type="password"
+                    className="input mono-num"
+                    placeholder="Nuovo codice"
+                    maxLength={8}
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="change-pin-confirm">Conferma Nuovo PIN</label>
+                  <input
+                    id="change-pin-confirm"
+                    type="password"
+                    className="input mono-num"
+                    placeholder="Ripeti nuovo codice"
+                    maxLength={8}
+                    value={confirmPin}
+                    onChange={(e) => setConfirmPin(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: '0.5rem' }}>
+                <button type="submit" className="btn btn-primary">
+                  <Check size={15} /> Salva Nuovo PIN
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* Remove / Disable PIN */}
+          <section className="card">
+            <div className="card-header">
+              <div className="card-title">
+                <Trash2 size={18} style={{ color: 'var(--status-danger)' }} />
+                Rimuovi Protezione PIN
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>
+                  Disattiva e cancella il PIN
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  L'applicazione si aprirà direttamente senza richiedere codici di sblocco.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => setShowRemoveConfirm((v) => !v)}
+              >
+                Rimuovi PIN
+              </button>
+            </div>
+
+            {showRemoveConfirm && (
+              <div
+                style={{
+                  marginTop: '1rem',
+                  paddingTop: '0.75rem',
+                  borderTop: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.5rem',
+                }}
+              >
+                <label
+                  htmlFor="remove-confirm-pin"
+                  style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}
+                >
+                  Inserisci il PIN attuale per confermare la rimozione definitiva:
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '340px' }}>
+                  <input
+                    id="remove-confirm-pin"
+                    type="password"
+                    className="input mono-num"
+                    placeholder="PIN attuale"
+                    maxLength={8}
+                    value={removeConfirmPin}
+                    onChange={(e) => setRemoveConfirmPin(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={handleRemovePin}
+                  >
+                    Conferma Rimozione
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setShowRemoveConfirm(false);
+                      setRemoveError(null);
+                    }}
+                  >
+                    Annulla
+                  </button>
+                </div>
+                {removeError && (
+                  <div style={{ fontSize: '0.78rem', color: 'var(--status-danger)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <AlertCircle size={14} /> {removeError}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Lock session now */}
+          <section className="card">
+            <div className="card-header">
+              <div className="card-title">
+                <Lock size={18} style={{ color: 'var(--accent-primary)' }} />
+                Blocco Sessione Immediato
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>
+                  Blocca Schermata Adesso
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Torna alla schermata di sblocco PIN per proteggere la sessione in corso.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onLockNow}
+              >
+                <Lock size={14} /> Blocca Ora
+              </button>
+            </div>
+          </section>
+        </>
+      )}
 
       {/* Privacy & Storage Explainer */}
       <section className="card" style={{ opacity: 0.9 }}>
@@ -666,13 +712,13 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
         </div>
         <ul style={{ paddingLeft: '1.25rem', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           <li>
-            <strong>100% Locale:</strong> Il PIN e le preferenze di sicurezza sono memorizzati unicamente nel <code>localStorage</code> del browser del tuo telefono/computer.
+            <strong>100% Locale:</strong> Il PIN e i dati finanziari sono memorizzati unicamente nel <code>localStorage</code> del browser del tuo dispositivo.
           </li>
           <li>
-            <strong>Nessun Server:</strong> Nessun PIN, transazione o informazione finanziaria viene mai inviata a server esterni o a GitHub.
+            <strong>Zero Server:</strong> Nessun dato, password o file viene inviato a server esterni né a GitHub.
           </li>
           <li>
-            <strong>Disattivabile:</strong> Quando avrai completato la fase beta o vorrai accedere direttamente, puoi rimuovere il PIN con un clic da questo pannello.
+            <strong>Flessibile:</strong> Puoi impostare, modificare o rimuovere il PIN in qualsiasi momento.
           </li>
         </ul>
       </section>

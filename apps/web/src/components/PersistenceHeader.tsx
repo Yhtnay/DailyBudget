@@ -77,7 +77,12 @@ export function PersistenceHeader({
         <div className="brand-cluster">
           <div className="brand-mark">DB</div>
           <div>
-            <h1 className="brand-title">DailyBudget</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <h1 className="brand-title">DailyBudget</h1>
+              <span className="pin-beta-pill" style={{ fontSize: '0.62rem', padding: '0.1rem 0.45rem' }}>
+                v0.2.0
+              </span>
+            </div>
             <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
               SQLite-Wasm • OPFS • File System Access API
             </div>

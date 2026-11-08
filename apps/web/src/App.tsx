@@ -53,20 +53,19 @@ export default function App() {
     new Date().toISOString().slice(0, 10)
   );
 
-  // Security & PIN Gatekeeper state
+  // Security & PIN Gatekeeper state (optional, defaults to disabled)
   const [isPinEnabled, setIsPinEnabled] = useState<boolean>(() => isPinProtectionEnabled());
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => isSessionUnlocked());
-  const [, setCurrentPin] = useState<string>(() => getStoredPin());
 
   const handleLockApp = useCallback(() => {
     lockSession();
     setIsUnlocked(false);
   }, []);
 
-  const handlePinStateChange = useCallback((enabled: boolean, newPin?: string) => {
+  const handlePinStateChange = useCallback((enabled: boolean) => {
     setIsPinEnabled(enabled);
-    if (newPin) {
-      setCurrentPin(newPin);
+    if (!enabled) {
+      setIsUnlocked(true);
     }
   }, []);
 

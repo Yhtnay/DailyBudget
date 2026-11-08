@@ -1,51 +1,76 @@
-# DailyBudget
+# DailyBudget (v0.2.0)
 
-**DailyBudget** è una WebApp finanziaria **Open Source, Local-First e Privacy-First** progettata per funzionare al 100% in locale dal browser leggendo e scrivendo direttamente su un singolo file SQLite portatile (`.dbbudget`), con architettura condivisa verso iOS/Android, Widget nativi (WidgetKit / Jetpack Glance) e Smartwatch (WatchOS / Wear OS).
+[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](./LICENSE)
+[![Local-First](https://img.shields.io/badge/Architecture-Local--First-blue.svg)](./docs/ARCHITECTURE.md)
+[![SQLite](https://img.shields.io/badge/Format-.dbbudget%20(SQLite3)-teal.svg)](./docs/DATABASE_SCHEMA.md)
 
----
+**DailyBudget** è una WebApp finanziaria **Open Source, Local-First e Privacy-First** progettata per funzionare al 100% in locale nel browser leggendo e scrivendo direttamente su un singolo file SQLite portatile (`.dbbudget`), con supporto PWA per smartphone (iOS / Android) e architettura predisposta per widget nativi (WidgetKit / Jetpack Glance).
 
-## Documentazione Architetturale & Prodotto (con Schemi Mermaid)
-
-- **[Architettura di Sistema (`docs/ARCHITECTURE.md`)](./docs/ARCHITECTURE.md)** — Topologia del monorepo, pipeline a 3 livelli `SQLite-Wasm` + `OPFS` + `File System Access API`, architettura Zero-JS per Widget & Smartwatch (`widget_snapshot`), sincronizzazione Offline-First Tassi Fiat & Prezzi Crypto (`market-sync`), strategia ibrida smart allegati (`<= 500 KB` inline blob), sincronizzazione multi-dispositivo con Row-Level LWW Merge e pipeline Import/Export CSV bancario con deduplica.
-- **[Analisi del Prodotto & Regole Contabili (`docs/PRODUCT_ANALYSIS.md`)](./docs/PRODUCT_ANALYSIS.md)** — Invariante Zero-Float Fiat, separazione Cashflow (`base_amount`) vs Competenza (`budget_base_amount`), albero decisionale `Transazione > Conto` e regola rimborsi `income`, ciclo di budget custom (`month_start_day`..`month_start_day - 1`), floor anti-sforamento a `0,00 €` + 1-Click Savings Sweep, Tricount Greedy Minimum Cash Flow e doppia modalità Competenza/Cassa (`include_tricount_owes_immediately`), Multi-Valuta a 3 livelli, Motore Ricorrenze Automatiche (`recurring_rules`) e Crypto WAC con cashflow Fiat collegato (`linked_account_id`).
-- **[Schema Database SQLite v2 (`docs/DATABASE_SCHEMA.md`)](./docs/DATABASE_SCHEMA.md)** — Diagramma Entità-Relazione (`erDiagram`) completo delle 17 tabelle del formato `.dbbudget`, vincoli di integrità e indici parziali.
-- **[Architettura Multi-Agente (`docs/AGENTS_ARCHITECTURE.md`)](./docs/AGENTS_ARCHITECTURE.md)** — Topologia dell'Orchestratore e dei 6 Sub-Agenti specializzati (`core-quant-agent`, `db-storage-agent`, `web-ui-agent`, `mobile-native-agent`, `qa-auditor-agent`, `docs-architect-agent`).
-- **[Handoff Baseline (`docs/HANDOFF_CONTEXT.md`)](./docs/HANDOFF_CONTEXT.md)** — Specifica di handoff iniziale e backlog evolutivo.
+Nessun dato viene inviato a server cloud: tutti i calcoli e i database risiedono esclusivamente nella memoria locale del dispositivo dell'utente.
 
 ---
 
-## Struttura del Monorepo (`Turborepo` + `pnpm`)
+## 📖 Documentazione e Guide
 
-```text
-DailyBudget/
-├── apps/
-│   └── web/                  # SPA/PWA React 19 + TypeScript + Vite (100% Local-First)
-├── packages/
-│   ├── core/                 # Motore matematico/contabile in TypeScript puro (zero dipendenze)
-│   └── db/                   # Schema SQLite v2, SQLite-Wasm engine, OPFS & File System Access API
-├── docs/
-│   ├── ARCHITECTURE.md       # Architettura sistema, persistenza .dbbudget e widget nativi
-│   ├── PRODUCT_ANALYSIS.md   # Formule contabili, flussi Tricount, Prestiti e Crypto WAC
-│   ├── DATABASE_SCHEMA.md    # ER Diagram completo e dizionario tabelle SQLite v2
-│   ├── AGENTS_ARCHITECTURE.md# Orchestratore e 6 Sub-Agenti specializzati
-│   └── HANDOFF_CONTEXT.md    # Specifica di handoff e roadmap
-└── turbo.json
-```
+- **[Manuale Utente Completo (`docs/USER_MANUAL.md`)](./docs/USER_MANUAL.md)** — Guida pratica illustrata per utenti finali: formule del DailyBudget, conti bancari, split spese con scontrini, ricorrenze automatiche, gruppi Tricount, prestiti, portfolio Crypto WAC, backup `.dbbudget` e installazione su smartphone.
+- **[Linee Guida Contributori (`docs/CONTRIBUTING.md`)](./docs/CONTRIBUTING.md)** — Come configurare l'ambiente di sviluppo, eseguire i test, convenzioni di commit e inviare Pull Request.
+- **[Architettura di Sistema (`docs/ARCHITECTURE.md`)](./docs/ARCHITECTURE.md)** — Topologia del monorepo, pipeline di storage a 3 livelli (`SQLite-Wasm` + `OPFS` + `File System Access API`), sincronizzazione offline-first e merge LWW.
+- **[Analisi del Prodotto & Regole Contabili (`docs/PRODUCT_ANALYSIS.md`)](./docs/PRODUCT_ANALYSIS.md)** — Invariante Zero-Float Fiat, ciclo di budget custom, algoritmo Tricount Greedy Minimum Cash Flow e Crypto WAC.
+- **[Schema Database SQLite v2 (`docs/DATABASE_SCHEMA.md`)](./docs/DATABASE_SCHEMA.md)** — Schema relazionale completo delle 17 tabelle del formato `.dbbudget` con indici parziali e vincoli d'integrità.
+- **[Architettura Multi-Agente (`docs/AGENTS_ARCHITECTURE.md`)](./docs/AGENTS_ARCHITECTURE.md)** — Topologia dell'Orchestratore e dei Sub-Agenti specializzati.
 
 ---
 
-## Avvio Rapido (Sviluppo Locale)
+## 🚀 Utilizzo su Smartphone & Deploy Web
+
+### Accesso da Smartphone (PWA Offline)
+DailyBudget può essere eseguito da qualsiasi browser mobile (Safari su iOS o Chrome su Android) e salvato sulla schermata Home come una normale applicazione:
+1. Apri l'indirizzo della WebApp dal browser del telefono.
+2. Seleziona **"Aggiungi a schermata Home"** dal menu di condivisione del browser.
+3. L'icona verrà creata sulla Home e l'app funzionerà a schermo intero anche senza connessione internet (in modalità aereo o offline).
+
+### Deploy Automatico su GitHub Pages
+Il repository include un workflow GitHub Actions preconfigurato ([`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml)):
+1. Rendi il repository pubblico su GitHub (`Settings > Danger Zone > Change visibility`).
+2. Vai su **Settings > Pages** e seleziona **GitHub Actions** come sorgente.
+3. Ad ogni `git push` su `main`, il workflow compilerà la WebApp ed effettuerà il deploy su `https://<tuo-utente>.github.io/DailyBudget/`.
+
+---
+
+## 💻 Sviluppo Locale
+
+### Prerequisiti
+- **Node.js**: `>= 20` (consigliata 22 LTS)
+- **pnpm**: `>= 9` (consigliata 10)
 
 ```bash
 # Installa le dipendenze del monorepo
 pnpm install
 
-# Esegui i test unitari e di integrazione SQLite (.dbbudget)
+# Esegui i test unitari e di integrazione (Core, DB, Web)
 pnpm test
 
 # Verifica i tipi TypeScript su tutti i pacchetti
 pnpm typecheck
 
-# Avvia la WebApp in modalità sviluppo
+# Compila la WebApp per la produzione
+pnpm build
+
+# Avvia la WebApp in modalità sviluppo locale
 pnpm dev
 ```
+
+---
+
+## 🔒 Sicurezza & Protezione Accesso
+
+DailyBudget non richiede alcun PIN al primo avvio. Per chi desidera proteggere l'accesso all'apertura dell'applicazione (particolarmente utile su dispositivi condivisi o smartphone):
+- Accedi al tab **"Impostazioni & Sicurezza"**.
+- Imposta un PIN numerico personalizzato (da 4 a 8 cifre).
+- Il PIN viene memorizzato esclusivamente in locale nel browser del dispositivo. Puoi modificarlo o rimuoverlo in qualsiasi momento con un solo clic.
+
+---
+
+## 📄 Licenza
+
+Distribuito sotto licenza Open Source **MIT**. Consulta il file [`LICENSE`](./LICENSE) per maggiori informazioni.

@@ -32,61 +32,56 @@ const mockSession: Record<string, string> = {};
 };
 
 import {
-  DEFAULT_PIN,
   getStoredPin,
   isPinProtectionEnabled,
   isSessionUnlocked,
   lockSession,
-  resetPinToDefault,
-  setPinProtectionEnabled,
-  setStoredPin,
+  removePinProtection,
+  setPinProtection,
   unlockSession,
 } from './PinSecurity.js';
 
-describe('PinSecurity Beta Gatekeeper', () => {
+describe('PinSecurity Optional Local Gatekeeper', () => {
   beforeEach(() => {
     for (const k in mockStorage) delete mockStorage[k];
     for (const k in mockSession) delete mockSession[k];
   });
 
-  it('defaults to enabled with PIN 150116 when unconfigured', () => {
-    assert.equal(isPinProtectionEnabled(), true);
-    assert.equal(getStoredPin(), '150116');
-    assert.equal(isSessionUnlocked(), false);
+  it('defaults to disabled with no PIN configured at first launch', () => {
+    assert.equal(isPinProtectionEnabled(), false);
+    assert.equal(getStoredPin(), null);
+    assert.equal(isSessionUnlocked(), true);
   });
 
-  it('unlocks and locks session correctly', () => {
+  it('activates protection when user sets a custom PIN', () => {
+    setPinProtection('4321');
+    assert.equal(isPinProtectionEnabled(), true);
+    assert.equal(getStoredPin(), '4321');
+    assert.equal(isSessionUnlocked(), true);
+  });
+
+  it('locks and unlocks session when PIN is enabled', () => {
+    setPinProtection('9876');
+    lockSession();
     assert.equal(isSessionUnlocked(), false);
     unlockSession();
     assert.equal(isSessionUnlocked(), true);
-    lockSession();
-    assert.equal(isSessionUnlocked(), false);
   });
 
-  it('allows updating the stored PIN', () => {
-    setStoredPin('987654');
-    assert.equal(getStoredPin(), '987654');
+  it('updates stored PIN when user changes it', () => {
+    setPinProtection('1234');
+    setPinProtection('5678');
+    assert.equal(getStoredPin(), '5678');
+    assert.equal(isPinProtectionEnabled(), true);
   });
 
-  it('allows disabling PIN protection', () => {
-    setPinProtectionEnabled(false);
+  it('removes PIN protection completely on user request', () => {
+    setPinProtection('9999');
+    assert.equal(isPinProtectionEnabled(), true);
+
+    removePinProtection();
     assert.equal(isPinProtectionEnabled(), false);
-    // When disabled, session is always considered unlocked
+    assert.equal(getStoredPin(), null);
     assert.equal(isSessionUnlocked(), true);
-  });
-
-  it('allows re-enabling PIN protection', () => {
-    setPinProtectionEnabled(false);
-    assert.equal(isPinProtectionEnabled(), false);
-    setPinProtectionEnabled(true);
-    assert.equal(isPinProtectionEnabled(), true);
-  });
-
-  it('resets to factory default 150116', () => {
-    setStoredPin('112233');
-    setPinProtectionEnabled(false);
-    resetPinToDefault();
-    assert.equal(getStoredPin(), DEFAULT_PIN);
-    assert.equal(isPinProtectionEnabled(), true);
   });
 });
