@@ -32,6 +32,14 @@ import { LoansTab } from './components/LoansTab';
 import { PersistenceHeader, type ActiveTab } from './components/PersistenceHeader';
 import { TransactionsTab } from './components/TransactionsTab';
 import { TricountTab } from './components/TricountTab';
+import {
+  PinLockScreen,
+  SecuritySettings,
+  getStoredPin,
+  isPinProtectionEnabled,
+  isSessionUnlocked,
+  lockSession,
+} from './PinSecurity';
 
 export default function App() {
   const repoRef = useRef<DailyBudgetRepository | null>(null);
@@ -44,6 +52,23 @@ export default function App() {
   const [referenceDate, setReferenceDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10)
   );
+
+  // Security & PIN Gatekeeper state
+  const [isPinEnabled, setIsPinEnabled] = useState<boolean>(() => isPinProtectionEnabled());
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => isSessionUnlocked());
+  const [, setCurrentPin] = useState<string>(() => getStoredPin());
+
+  const handleLockApp = useCallback(() => {
+    lockSession();
+    setIsUnlocked(false);
+  }, []);
+
+  const handlePinStateChange = useCallback((enabled: boolean, newPin?: string) => {
+    setIsPinEnabled(enabled);
+    if (newPin) {
+      setCurrentPin(newPin);
+    }
+  }, []);
 
   const [persistence, setPersistence] = useState<StoragePersistenceState>({
     fileName: 'active_workspace.dbbudget',
@@ -228,6 +253,16 @@ export default function App() {
     }
   };
 
+  if (isPinEnabled && !isUnlocked) {
+    return (
+      <PinLockScreen
+        onUnlock={() => setIsUnlocked(true)}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+      />
+    );
+  }
+
   if (!isReady || !dashboard || !repoRef.current) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '0.75rem' }}>
@@ -248,6 +283,8 @@ export default function App() {
         theme={theme}
         activeTab={activeTab}
         referenceDate={referenceDate}
+        isPinEnabled={isPinEnabled}
+        onLockSession={handleLockApp}
         counts={{
           transactions: transactions.length,
           tricountGroups: tricountGroups.length,
@@ -293,6 +330,13 @@ export default function App() {
         )}
         {activeTab === 'crypto' && (
           <CryptoTab repo={repoRef.current} dashboard={dashboard} accounts={accounts} referenceDate={referenceDate} onRefresh={refreshActiveRepo} onSyncMarkets={handleSyncMarkets} onNotify={setStatusBanner} />
+        )}
+        {activeTab === 'settings' && (
+          <SecuritySettings
+            isPinEnabled={isPinEnabled}
+            onPinStateChange={handlePinStateChange}
+            onLockNow={handleLockApp}
+          />
         )}
       </main>
     </div>

@@ -8,22 +8,32 @@ import {
   FolderOpen,
   GitMerge,
   HandCoins,
+  Lock,
   Moon,
   RefreshCw,
   RotateCcw,
   Save,
+  Settings,
   Sun,
   Users,
   Wallet,
 } from 'lucide-react';
 
-export type ActiveTab = 'dashboard' | 'transactions' | 'tricount' | 'loans' | 'crypto';
+export type ActiveTab =
+  | 'dashboard'
+  | 'transactions'
+  | 'tricount'
+  | 'loans'
+  | 'crypto'
+  | 'settings';
 
 interface PersistenceHeaderProps {
   persistence: StoragePersistenceState;
   theme: 'light' | 'dark';
   activeTab: ActiveTab;
   referenceDate: string;
+  isPinEnabled?: boolean;
+  onLockSession?: () => void;
   counts: {
     transactions: number;
     tricountGroups: number;
@@ -48,6 +58,8 @@ export function PersistenceHeader({
   activeTab,
   referenceDate,
   counts,
+  isPinEnabled,
+  onLockSession,
   onOpenLocalFile,
   onSaveToLocalDisk,
   onDownloadDbBudget,
@@ -167,6 +179,20 @@ export function PersistenceHeader({
             Sync Tassi &amp; Crypto
           </button>
 
+          {isPinEnabled && onLockSession && (
+            <button
+              id="btn-lock-session"
+              type="button"
+              className="btn"
+              onClick={onLockSession}
+              title="Blocca sessione con PIN"
+              aria-label="Blocca sessione con PIN"
+            >
+              <Lock size={15} />
+              Blocca
+            </button>
+          )}
+
           <button
             id="btn-toggle-theme"
             type="button"
@@ -229,6 +255,16 @@ export function PersistenceHeader({
           >
             <Bitcoin size={16} />
             Crypto WAC ({counts.cryptoAssets})
+          </button>
+
+          <button
+            id="tab-settings"
+            type="button"
+            className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => onSelectTab('settings')}
+          >
+            <Settings size={16} />
+            Impostazioni &amp; Sicurezza
           </button>
         </div>
 
