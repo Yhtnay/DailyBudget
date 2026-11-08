@@ -98,3 +98,44 @@ sequenceDiagram
 ### 6. `docs-architect-agent` — *Documentation, Product Analysis & Mermaid Diagrams Specialist*
 - **Ownership**: `docs/**` e `README.md`
 - **Responsabilità**: Mantenere sempre sincronizzata la suite documentale (`ARCHITECTURE.md`, `PRODUCT_ANALYSIS.md`, `DATABASE_SCHEMA.md`, `AGENTS_ARCHITECTURE.md`, `README.md`) corredata da diagrammi Mermaid (`flowchart`, `sequenceDiagram`, `erDiagram`, `stateDiagram-v2`) ad ogni evoluzione dello schema o delle regole di business.
+
+---
+
+## 4. Strategia di Ottimizzazione Token & Routing dei Modelli
+
+Per massimizzare la velocità di esecuzione e ridurre drasticamente il consumo di token di I/O senza sacrificare il rigore contabile, l'Orchestratore applica **4 regole architetturali di ottimizzazione**:
+
+```mermaid
+flowchart LR
+    ORCH["Orchestratore (Contract-First + Line Ranges)"]
+
+    subgraph TierPro["Tier Pro / Inherit (Alta Precisione)"]
+        PRO_CORE["core-quant-agent (Zero-Float, WAC, Multi-Valuta)"]
+        PRO_DB["db-storage-agent (DDL, Migrazioni, LWW Merge)"]
+    end
+
+    subgraph TierFlash["Tier Flash (Esecuzione Modulare Rapida)"]
+        FL_DB["db-storage-agent (Metodi CRUD Standard)"]
+        FL_WEB["web-ui-agent (Componenti Modulari *Tab.tsx)"]
+        FL_DOCS["docs-architect-agent (Markdown & Mermaid docs/**)"]
+        FL_QA["qa-auditor-agent (Test, Typecheck & Build)"]
+    end
+
+    subgraph TierLite["Tier Flash-Lite (Check Istantanei)"]
+        LITE["Ricerche Rapide & Check di Stato"]
+    end
+
+    ORCH -- "Contratti Puri & Invarianti" --> TierPro
+    ORCH -- "Prompt Mirati + Riutilizzo send_message" --> TierFlash
+    ORCH -- "Ispezione Veloce" --> TierLite
+```
+
+### Le 4 Regole di Risparmio Token Attive
+
+| # | Regola di Ottimizzazione | Strategia Tecnica & Configurazione | Impatto sul Consumo Token |
+| :--- | :--- | :--- | :--- |
+| **1** | **Matrice di Routing dei Modelli per Ruolo (`Model` Tiering)** | • `core-quant-agent`: `inherit` / `pro` (massima precisione per calcoli contabili Zero-Float, WAC e multi-valuta).<br>• `db-storage-agent`: `inherit` / `pro` per DDL/migrazioni/LWW Merge; `flash` per metodi CRUD standard.<br>• `web-ui-agent`: `flash` (costruzione e aggiornamento componenti React modulari su contratti TypeScript già definiti).<br>• `docs-architect-agent`: `flash` (aggiornamento documentazione Markdown e diagrammi Mermaid in `docs/**`).<br>• `qa-auditor-agent`: `flash` (esecuzione pipeline `pnpm test && pnpm typecheck && pnpm build` e verifica invarianti).<br>• Ricerche rapide / Check di stato: `flash_lite`. | Riserva i modelli `pro` esclusivamente al ragionamento matematico/SQL complesso, delegando fino all'80% dei task operativi a `flash` e `flash_lite`. |
+| **2** | **Riutilizzo del Contesto via `send_message`** | Per task successivi nello stesso dominio, l'Orchestratore invia istruzioni al `conversationId` del sub-agente già attivo tramite `send_message` anziché istanziarne uno nuovo da zero, evitando di rileggere i file del pacchetto. | Azzera il costo di cold-start e di rilettura ripetuta dei sorgenti del pacchetto. |
+| **3** | **Partizionamento Modulare dei File UI (`apps/web/src/components/*Tab.tsx`)** | Ogni vista della WebApp risiede in un componente dedicato (`DashboardTab.tsx`, `TransactionsTab.tsx`, `TricountTab.tsx`, `LoansTab.tsx`, `CryptoTab.tsx`, `PersistenceHeader.tsx`), permettendo a `web-ui-agent` di leggere e modificare ~200–400 righe invece di un file monolitico da >3.500 righe. | **Risparmio 5x–8x** sui token di I/O ad ogni iterazione UI. |
+| **4** | **Prompt Contract-First con Line Ranges (`StartLine`/`EndLine`)** | L'Orchestratore fornisce nel prompt le firme TypeScript esatte e i range di righe mirati (`StartLine`/`EndLine`), evitando scansioni esplorative dell'intero repository da parte dei sub-agenti. | Elimina letture ridondanti e garantisce modifiche chirurgiche al primo colpo. |
+
